@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Beter XVideos</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
+
+    <div id="siteHeader"></div>
+
+    <main id="conteudo" class="page-shell page-shell-wide">
+      <aside class="panel sidebar-panel">
+        <div class="panel-heading">
+          <h2>Navegação rápida</h2>
+        </div>
+
+        <div class="chip-group">
+          <div class="chips-header">
+            <p class="section-label">Buscas recentes</p>
+            <button id="clearRecentButton" class="ghost" type="button">Limpar</button>
+          </div>
+          <div id="recentSearches" class="chips"></div>
+        </div>
+
+        <div class="chip-group">
+          <div class="chips-header">
+            <p class="section-label">Categorias rápidas</p>
+          </div>
+          <div id="quickCategories" class="chips chips-large"></div>
+        </div>
+      </aside>
+
+      <section class="panel page-panel">
+        <div class="panel-heading panel-heading-split">
+          <div>
+            <h2>Feed</h2>
+            <p id="resultSummary">Carregando feed inicial...</p>
+          </div>
+          <div class="pager" aria-label="Paginação">
+            <button id="prevPageButton" class="secondary" type="button">Página anterior</button>
+            <span id="pageIndicator">Página 1</span>
+            <button id="nextPageButton" class="secondary" type="button">Próxima página</button>
+          </div>
+        </div>
+
+        <p id="statusMessage" class="status-message" aria-live="off"></p>
+        <ol id="resultsList" class="feed-grid"></ol>
+      </section>
+    </main>
+
+    <script type="module" src="/home.js"></script>
+  </body>
+</html>

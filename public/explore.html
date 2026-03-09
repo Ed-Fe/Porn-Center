@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Explorar · Beter XVideos</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
+
+    <div id="siteHeader"></div>
+
+    <main id="conteudo" class="page-shell page-shell-wide">
+      <aside class="panel sidebar-panel">
+        <div class="panel-heading">
+          <h2>Categorias rápidas</h2>
+          <p>Entre por um atalho ou refine pela busca acima.</p>
+        </div>
+        <div id="quickCategories" class="chips chips-large"></div>
+      </aside>
+
+      <section class="panel page-panel">
+        <div class="panel-heading panel-heading-split">
+          <div>
+            <h2>Resultados da busca</h2>
+            <p id="resultSummary">Digite algo na busca acima para explorar vídeos.</p>
+          </div>
+          <div class="pager" aria-label="Paginação">
+            <button id="prevPageButton" class="secondary" type="button">Página anterior</button>
+            <span id="pageIndicator">Página 1</span>
+            <button id="nextPageButton" class="secondary" type="button">Próxima página</button>
+          </div>
+        </div>
+
+        <p id="statusMessage" class="status-message" aria-live="off"></p>
+        <ol id="resultsList" class="feed-grid"></ol>
+      </section>
+    </main>
+
+    <script type="module" src="/explore.js"></script>
+  </body>
+</html>

@@ -1,0 +1,32 @@
+{
+  "name": "beter-xvideos-access",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Wrapper local e acessível para busca e navegação usando xvideos-scraper.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "accessibility",
+    "xvideos",
+    "wrapper",
+    "search",
+    "express"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "axios": "^1.8.4",
+    "cheerio": "^1.0.0",
+    "entities": "^6.0.1",
+    "express": "^4.21.2",
+    "hls.js": "^1.6.15",
+    "xvideos-scraper": "^1.0.4"
+  }
+}

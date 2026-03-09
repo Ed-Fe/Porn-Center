@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Salvos · Beter XVideos</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
+
+    <div id="siteHeader"></div>
+
+    <main id="conteudo" class="page-shell single-column-shell">
+      <section class="panel page-panel">
+        <div class="panel-heading panel-heading-split">
+          <div>
+            <h2>Vídeos salvos</h2>
+            <p id="savedSummary">Seus favoritos locais aparecem aqui.</p>
+          </div>
+          <button id="clearFavoritesButton" class="ghost" type="button">Limpar tudo</button>
+        </div>
+
+        <p id="statusMessage" class="status-message" aria-live="off"></p>
+        <ul id="favoritesList" class="saved-grid"></ul>
+      </section>
+    </main>
+
+    <script type="module" src="/saved.js"></script>
+  </body>
+</html>

@@ -1,0 +1,142 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "test project",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"test"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "stop-port-3000",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-Command",
+				"$connection = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($null -eq $connection) { Write-Output 'NO_PROCESS_ON_3000'; exit 0 }; $pid = $connection.OwningProcess; $process = Get-Process -Id $pid -ErrorAction SilentlyContinue; if ($null -eq $process) { Write-Output ('PID_FOUND_BUT_PROCESS_MISSING:{0}' -f $pid); exit 0 }; Stop-Process -Id $pid -Force; Write-Output ('STOPPED_PID:{0};NAME:{1}' -f $pid, $process.ProcessName)"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "none"
+		},
+		{
+			"label": "stop-port-3000-direct",
+			"type": "shell",
+			"command": "$connection = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue; if ($null -eq $connection) { Write-Output 'NO_PROCESS_ON_3000'; exit 0 }; $listener = $connection | Select-Object -First 1; $targetPid = $listener.OwningProcess; $process = Get-Process -Id $targetPid -ErrorAction SilentlyContinue; if ($null -eq $process) { Write-Output ('PID_FOUND_BUT_PROCESS_MISSING:{0}' -f $targetPid); exit 0 }; Stop-Process -Id $targetPid -Force; Write-Output ('STOPPED_PID:{0} NAME:{1}' -f $targetPid, $process.ProcessName)",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "none"
+		},
+		{
+			"label": "inspect-star-pages",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"-e",
+				"const axios=require('axios'); const cheerio=require('cheerio'); const headers={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64)','Cookie':'age_verified=1; platform=pc'}; async function inspect(url, terms){const res=await axios.get(url,{headers,timeout:30000,maxRedirects:5}); const html=String(res.data); console.log('URL:',url); console.log('TITLE:',cheerio.load(html)('title').text().trim()); for (const term of terms){const idx=html.indexOf(term); console.log('TERM',term,'IDX',idx); if(idx>=0){console.log(html.slice(Math.max(0,idx-250), idx+1200).replace(/\\s+/g,' '));}} console.log('---END---');} (async()=>{await inspect('https://www.xvideos.com/profiles/xvideosstudio',['profile-name','thumb-block','profile-description','subscriber']); await inspect('https://www.pornhub.com/pornstar/abella-danger',['profileUserPic','pcVideoListItem','profileSection','aboutMeSection','videosUploaded']);})().catch(err=>{console.error(err.response?.status, err.message); process.exit(1);});"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "none"
+		},
+		{
+			"label": "test project star feature",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"test"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "test project star feature rerun",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"test"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "inspect creator output",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				".tmp/inspect-creators.js"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "none"
+		},
+		{
+			"label": "inspect profile structure",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				".tmp/inspect-profile-structure.js"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "none"
+		},
+		{
+			"label": "dump profile html",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				".tmp/dump-profile-html.js"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "none"
+		},
+		{
+			"label": "npm test",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"test"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "normalizers test status",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-Command",
+				"node --test tests/normalizers.test.js; if ($LASTEXITCODE -eq 0) { 'PASS' | Set-Content .tmp/test-status.txt } else { 'FAIL' | Set-Content .tmp/test-status.txt; exit $LASTEXITCODE }"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "normalizers tests rerun",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"test"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "npm test validation",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"test"
+			],
+			"isBackground": false
+		}
+	]
+}
