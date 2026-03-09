@@ -158,23 +158,49 @@ function extractStructuredVideoData(html) {
   };
 }
 
-function extractPlayableFormatsFromHtml(html) {
+async function extractPlayableFormatsFromHtml(html, baseUrl = '') {
   const $ = cheerio.load(html);
   const seen = new Set();
-  const urls = [
-    ...$('video source[src], video[src], iframe[src]')
-      .map((_, element) => $(element).attr('src'))
-      .get(),
-    ...Array.from(html.matchAll(/https?:\/\/[^"'\s)<>]+\.(?:mp4|m3u8|webm|3gp)(?:\?[^"'\s)<>]*)?/gi)).map((match) => match[0])
-  ];
+  const results = new Set();
 
-  return urls
-    .map((value) => absoluteUrl(value))
-    .filter((value) => value && !seen.has(value) && seen.add(value))
-    .map((url) => ({
-      label: /\.m3u8($|\?)/i.test(url) ? 'HLS' : 'Qualidade padrão',
-      url
-    }));
+  function addUrl(value) {
+    const u = absoluteUrl(value || '');
+    if (u && !seen.has(u)) {
+      seen.add(u);
+      results.add(u);
+    }
+  }
+
+  // Collect immediate sources and obvious file links from the page
+  $('video source[src], video[src]').each((_, el) => addUrl($(el).attr('src')));
+  $('iframe[src]').each((_, el) => addUrl($(el).attr('src')));
+
+  for (const m of html.matchAll(/https?:\/\/[^"'\s)<>]+\.(?:mp4|m3u8|webm|3gp)(?:\?[^"'\s)<>]*)?/gi)) {
+    addUrl(m[0]);
+  }
+
+  // For any iframe we found, fetch its HTML and try to extract real video sources from inside.
+  const iframeSrcs = Array.from(results).filter((u) => /iframe/i.test(u) || /\/embed|player|video/i.test(u) || u.includes('mallandrinhas'));
+
+  for (const iframeSrc of iframeSrcs) {
+    try {
+      const iframeHtml = await requestHtml(iframeSrc.startsWith('http') ? iframeSrc : new URL(iframeSrc, baseUrl || BASE_URL).toString());
+      const $$ = cheerio.load(iframeHtml);
+
+      $$("video source[src], video[src]").each((_, el) => addUrl($$(el).attr('src')));
+
+      for (const m of String(iframeHtml).matchAll(/https?:\/\/[^"'\s)<>]+\.(?:mp4|m3u8|webm|3gp)(?:\?[^"'\s)<>]*)?/gi)) {
+        addUrl(m[0]);
+      }
+    } catch (err) {
+      // ignore iframe load errors
+    }
+  }
+
+  return Array.from(results).map((url) => ({
+    label: /\.m3u8($|\?)/i.test(url) ? 'HLS' : 'Qualidade padrão',
+    url
+  }));
 }
 
 function extractCreatorProfileDataFromHtml(html, profileUrl) {
@@ -232,7 +258,7 @@ async function getFeedVideosDirect(params = {}) {
 async function getVideoDataDirect(videoUrl) {
   const html = await requestHtml(videoUrl);
   const structured = extractStructuredVideoData(html);
-  const formats = extractPlayableFormatsFromHtml(html);
+  const formats = await extractPlayableFormatsFromHtml(html, videoUrl);
 
   return {
     ...structured,
