@@ -1,10 +1,18 @@
 export const QUICK_CATEGORIES = ['amateur', 'latina', 'milf', 'asian', 'anal', 'massage', 'public', 'cosplay'];
+export const PROVIDER_OPTIONS = Object.freeze([
+  { key: 'xvideos', label: 'XVideos', queryKey: 'xv', checkboxId: 'xvideosCheckbox' },
+  { key: 'pornhub', label: 'Pornhub', queryKey: 'ph', checkboxId: 'pornhubCheckbox' },
+  { key: 'mallandrinhas', label: 'Malandrinhas', queryKey: 'ml', checkboxId: 'mallandrinhasCheckbox' }
+]);
 export const DEFAULT_PROVIDER_PREFERENCES = Object.freeze({
-  includePornhub: true
+  includeXVideos: true,
+  includePornhub: true,
+  includeMallandrinhas: true
 });
 export const SOURCE_LABELS = Object.freeze({
   xvideos: 'XVideos',
-  pornhub: 'Pornhub'
+  pornhub: 'Pornhub',
+  mallandrinhas: 'Malandrinhas'
 });
 
 export const OPTION_LABELS = {
@@ -45,6 +53,22 @@ const MAIN_NAV_ITEMS = Object.freeze([
   { href: '/explore', label: 'Explorar' }
 ]);
 
+function providerBooleanKey(providerKey) {
+  if (providerKey === 'xvideos') {
+    return 'includeXVideos';
+  }
+
+  if (providerKey === 'pornhub') {
+    return 'includePornhub';
+  }
+
+  if (providerKey === 'mallandrinhas') {
+    return 'includeMallandrinhas';
+  }
+
+  return '';
+}
+
 function parseBoolean(value, fallback = false) {
   if (typeof value === 'boolean') {
     return value;
@@ -59,13 +83,54 @@ function parseBoolean(value, fallback = false) {
 
 export function normalizeProviderPreferences(value = {}, defaults = DEFAULT_PROVIDER_PREFERENCES) {
   const fallback = {
-    ...DEFAULT_PROVIDER_PREFERENCES,
-    ...(defaults && typeof defaults === 'object' ? defaults : {})
+    includeXVideos: parseBoolean(defaults.includeXVideos ?? defaults.xvideos, DEFAULT_PROVIDER_PREFERENCES.includeXVideos),
+    includePornhub: parseBoolean(defaults.includePornhub ?? defaults.pornhub, DEFAULT_PROVIDER_PREFERENCES.includePornhub),
+    includeMallandrinhas: parseBoolean(defaults.includeMallandrinhas ?? defaults.mallandrinhas, DEFAULT_PROVIDER_PREFERENCES.includeMallandrinhas)
   };
-  const rawIncludePornhub = value.ph ?? value.includePornhub ?? value.pornhub;
+  const providers = String(value.providers ?? value.enabledProviders ?? '')
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => PROVIDER_OPTIONS.some((option) => option.key === entry));
+
+  let preferences;
+
+  if (providers.length) {
+    preferences = {
+      includeXVideos: providers.includes('xvideos'),
+      includePornhub: providers.includes('pornhub'),
+      includeMallandrinhas: providers.includes('mallandrinhas')
+    };
+  } else {
+    preferences = {
+      includeXVideos: parseBoolean(value.xv ?? value.includeXVideos ?? value.xvideos, fallback.includeXVideos),
+      includePornhub: parseBoolean(value.ph ?? value.includePornhub ?? value.pornhub, fallback.includePornhub),
+      includeMallandrinhas: parseBoolean(value.ml ?? value.includeMallandrinhas ?? value.mallandrinhas, fallback.includeMallandrinhas)
+    };
+  }
+
+  let enabledProviders = PROVIDER_OPTIONS
+    .map((option) => option.key)
+    .filter((providerKey) => preferences[providerBooleanKey(providerKey)]);
+
+  if (!enabledProviders.length) {
+    enabledProviders = PROVIDER_OPTIONS
+      .map((option) => option.key)
+      .filter((providerKey) => fallback[providerBooleanKey(providerKey)]);
+
+    if (!enabledProviders.length) {
+      enabledProviders = ['xvideos'];
+    }
+
+    preferences = {
+      includeXVideos: enabledProviders.includes('xvideos'),
+      includePornhub: enabledProviders.includes('pornhub'),
+      includeMallandrinhas: enabledProviders.includes('mallandrinhas')
+    };
+  }
 
   return {
-    includePornhub: parseBoolean(rawIncludePornhub, fallback.includePornhub)
+    ...preferences,
+    enabledProviders
   };
 }
 
@@ -88,7 +153,10 @@ export function resolveProviderPreferences(params) {
 
   if (params instanceof URLSearchParams) {
     return normalizeProviderPreferences({
-      ph: params.has('ph') ? params.get('ph') : undefined
+      providers: params.get('providers') || undefined,
+      xv: params.has('xv') ? params.get('xv') : undefined,
+      ph: params.has('ph') ? params.get('ph') : undefined,
+      ml: params.has('ml') ? params.get('ml') : undefined
     }, stored);
   }
 
@@ -97,6 +165,14 @@ export function resolveProviderPreferences(params) {
 
 export function getSourceLabel(sourceKey = '', fallback = '') {
   return SOURCE_LABELS[sourceKey] || fallback || 'Fonte externa';
+}
+
+export function getEnabledProviderLabels(preferences = {}) {
+  const normalized = normalizeProviderPreferences(preferences, loadProviderPreferences());
+
+  return normalized.enabledProviders
+    .map((providerKey) => getSourceLabel(providerKey))
+    .join(' + ');
 }
 
 export async function fetchJson(url) {
@@ -182,7 +258,17 @@ export function renderSiteHeader(target, options = {}) {
             <label class="field"><span>Duração</span><select id="durationSelect" name="duration"></select></label>
             <label class="field"><span>Qualidade</span><select id="qualitySelect" name="quality"></select></label>
             <label class="checkbox-row header-checkbox-row"><input id="watchedCheckbox" name="watched" type="checkbox" value="h" /><span>Ocultar vistos</span></label>
-            <label class="checkbox-row header-checkbox-row"><input id="pornhubCheckbox" name="ph" type="checkbox" value="1" /><span>Incluir Pornhub</span></label>
+            <fieldset class="field provider-fieldset">
+              <legend>Provedores</legend>
+              <div class="provider-options">
+                ${PROVIDER_OPTIONS.map((option) => `
+                  <label class="checkbox-row header-checkbox-row provider-checkbox-row">
+                    <input id="${option.checkboxId}" data-provider="${option.key}" name="${option.queryKey}" type="checkbox" value="1" />
+                    <span>${option.label}</span>
+                  </label>
+                `).join('')}
+              </div>
+            </fieldset>
             <button class="secondary compact-button" id="clearFiltersButton" type="button">Limpar</button>
           </div>
         </form>
@@ -204,13 +290,27 @@ export function fillSearchControls(controls, params = {}) {
   controls.durationSelect.value = params.duration || 'allduration';
   controls.qualitySelect.value = params.quality || 'all';
   controls.watchedCheckbox.checked = params.watched === 'h';
-  if (controls.pornhubCheckbox) {
-    const preferences = normalizeProviderPreferences(params, loadProviderPreferences());
-    controls.pornhubCheckbox.checked = preferences.includePornhub;
-  }
+  const preferences = normalizeProviderPreferences(params, loadProviderPreferences());
+  controls.providerCheckboxes.forEach((checkbox) => {
+    checkbox.checked = preferences[providerBooleanKey(checkbox.dataset.provider)];
+  });
+}
+
+export function readProviderPreferencesFromControls(controls) {
+  const enabledProviders = PROVIDER_OPTIONS
+    .filter((option) => controls.providerCheckboxes.some((checkbox) => checkbox.dataset.provider === option.key && checkbox.checked))
+    .map((option) => option.key);
+
+  return normalizeProviderPreferences({ providers: enabledProviders.join(',') }, {
+    includeXVideos: false,
+    includePornhub: false,
+    includeMallandrinhas: false
+  });
 }
 
 export function readSearchControls(controls) {
+  const providerPreferences = readProviderPreferencesFromControls(controls);
+
   return {
     q: controls.searchInput.value.trim(),
     sort: controls.sortSelect.value,
@@ -218,7 +318,7 @@ export function readSearchControls(controls) {
     duration: controls.durationSelect.value,
     quality: controls.qualitySelect.value,
     watched: controls.watchedCheckbox.checked ? 'h' : '',
-    ph: controls.pornhubCheckbox?.checked ? '1' : ''
+    providers: providerPreferences.enabledProviders.join(',')
   };
 }
 
@@ -231,7 +331,7 @@ export function buildExploreHref(params = {}) {
   if (params.duration && params.duration !== 'allduration') search.set('duration', params.duration);
   if (params.quality && params.quality !== 'all') search.set('quality', params.quality);
   if (params.watched === 'h') search.set('watched', 'h');
-  if (normalizeProviderPreferences(params, loadProviderPreferences()).includePornhub) search.set('ph', '1');
+  search.set('providers', normalizeProviderPreferences(params, loadProviderPreferences()).enabledProviders.join(','));
   if (params.page && Number(params.page) > 1) search.set('page', String(params.page));
 
   const query = search.toString();
@@ -444,6 +544,9 @@ export function createSearchControls(root = document) {
     durationSelect: root.querySelector('#durationSelect'),
     qualitySelect: root.querySelector('#qualitySelect'),
     watchedCheckbox: root.querySelector('#watchedCheckbox'),
-    pornhubCheckbox: root.querySelector('#pornhubCheckbox')
+    xvideosCheckbox: root.querySelector('#xvideosCheckbox'),
+    pornhubCheckbox: root.querySelector('#pornhubCheckbox'),
+    mallandrinhasCheckbox: root.querySelector('#mallandrinhasCheckbox'),
+    providerCheckboxes: Array.from(root.querySelectorAll('[data-provider]'))
   };
 }

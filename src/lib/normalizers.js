@@ -2,14 +2,41 @@ const ALLOWED_SORTS = ['relevance', 'uploaddate', 'rating', 'length', 'views', '
 const ALLOWED_DATES = ['all', 'today', 'week', 'month', '3month', '6month'];
 const ALLOWED_DURATIONS = ['allduration', '1-3min', '3-10min', '10min_more', '10-20min', '20min_more'];
 const ALLOWED_QUALITIES = ['all', 'hd', '1080p'];
+const AVAILABLE_PROVIDER_KEYS = ['xvideos', 'pornhub', 'mallandrinhas'];
 const DEFAULT_PROVIDER_PREFERENCES = Object.freeze({
+  includeXVideos: true,
   includePornhub: true
+  ,
+  includeMallandrinhas: true
 });
 
 const SOURCE_LABELS = Object.freeze({
   xvideos: 'XVideos',
-  pornhub: 'Pornhub'
+  pornhub: 'Pornhub',
+  mallandrinhas: 'Malandrinhas'
 });
+
+const PROVIDER_QUERY_ALIASES = Object.freeze({
+  xvideos: ['xv', 'includeXVideos', 'xvideos'],
+  pornhub: ['ph', 'includePornhub', 'pornhub'],
+  mallandrinhas: ['ml', 'includeMallandrinhas', 'mallandrinhas']
+});
+
+function providerBooleanKey(providerKey) {
+  if (providerKey === 'xvideos') {
+    return 'includeXVideos';
+  }
+
+  if (providerKey === 'pornhub') {
+    return 'includePornhub';
+  }
+
+  if (providerKey === 'mallandrinhas') {
+    return 'includeMallandrinhas';
+  }
+
+  return '';
+}
 
 function pickAllowed(value, allowed, fallback) {
   return allowed.includes(value) ? value : fallback;
@@ -37,15 +64,74 @@ function parseBoolean(value, fallback = false) {
   return fallback;
 }
 
-function normalizeProviderPreferences(query = {}, defaults = DEFAULT_PROVIDER_PREFERENCES) {
-  const fallback = {
-    ...DEFAULT_PROVIDER_PREFERENCES,
-    ...(defaults && typeof defaults === 'object' ? defaults : {})
+function normalizeProviderDefaults(defaults = DEFAULT_PROVIDER_PREFERENCES) {
+  return {
+    includeXVideos: parseBoolean(defaults.includeXVideos ?? defaults.xvideos, DEFAULT_PROVIDER_PREFERENCES.includeXVideos),
+    includePornhub: parseBoolean(defaults.includePornhub ?? defaults.pornhub, DEFAULT_PROVIDER_PREFERENCES.includePornhub),
+    includeMallandrinhas: parseBoolean(defaults.includeMallandrinhas ?? defaults.mallandrinhas, DEFAULT_PROVIDER_PREFERENCES.includeMallandrinhas)
   };
-  const rawIncludePornhub = query.ph ?? query.includePornhub ?? query.pornhub;
+}
+
+function parseProviderList(value) {
+  const rawValues = Array.isArray(value) ? value : [value];
+
+  return rawValues
+    .flatMap((entry) => String(entry ?? '').split(','))
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => AVAILABLE_PROVIDER_KEYS.includes(entry));
+}
+
+function buildEnabledProviders(preferences) {
+  return AVAILABLE_PROVIDER_KEYS.filter((providerKey) => preferences[providerBooleanKey(providerKey)]);
+}
+
+function normalizeProviderPreferences(query = {}, defaults = DEFAULT_PROVIDER_PREFERENCES) {
+  const fallback = normalizeProviderDefaults(defaults && typeof defaults === 'object' ? defaults : DEFAULT_PROVIDER_PREFERENCES);
+  const requestedProviders = parseProviderList(query.providers ?? query.enabledProviders);
+  let preferences;
+
+  if (requestedProviders.length) {
+    preferences = {
+      includeXVideos: requestedProviders.includes('xvideos'),
+      includePornhub: requestedProviders.includes('pornhub'),
+      includeMallandrinhas: requestedProviders.includes('mallandrinhas')
+    };
+  } else {
+    preferences = {
+      includeXVideos: parseBoolean(
+        PROVIDER_QUERY_ALIASES.xvideos.map((field) => query[field]).find((value) => value != null),
+        fallback.includeXVideos
+      ),
+      includePornhub: parseBoolean(
+        PROVIDER_QUERY_ALIASES.pornhub.map((field) => query[field]).find((value) => value != null),
+        fallback.includePornhub
+      ),
+      includeMallandrinhas: parseBoolean(
+        PROVIDER_QUERY_ALIASES.mallandrinhas.map((field) => query[field]).find((value) => value != null),
+        fallback.includeMallandrinhas
+      )
+    };
+  }
+
+  let enabledProviders = buildEnabledProviders(preferences);
+
+  if (!enabledProviders.length) {
+    enabledProviders = buildEnabledProviders(fallback);
+
+    if (!enabledProviders.length) {
+      enabledProviders = ['xvideos'];
+    }
+
+    preferences = {
+      includeXVideos: enabledProviders.includes('xvideos'),
+      includePornhub: enabledProviders.includes('pornhub'),
+      includeMallandrinhas: enabledProviders.includes('mallandrinhas')
+    };
+  };
 
   return {
-    includePornhub: parseBoolean(rawIncludePornhub, fallback.includePornhub)
+    ...preferences,
+    enabledProviders
   };
 }
 
@@ -188,6 +274,7 @@ function getProviderKeyFromUrl(url) {
     const isHttp = parsed.protocol === 'http:' || parsed.protocol === 'https:';
     const isXVideos = /(^|\.)xvideos\d*\.com$/i.test(hostname);
     const isPornhub = /(^|\.)pornhub\.com$/i.test(hostname);
+    const isMallandrinhas = /(^|\.)mallandrinhas\.net$/i.test(hostname);
 
     if (!isHttp) {
       return '';
@@ -199,6 +286,10 @@ function getProviderKeyFromUrl(url) {
 
     if (isPornhub) {
       return 'pornhub';
+    }
+
+    if (isMallandrinhas) {
+      return 'mallandrinhas';
     }
 
     return '';
@@ -219,6 +310,10 @@ function isSafeCreatorUrl(url) {
 
     if (providerKey === 'pornhub') {
       return /^\/(pornstar|model|channels|users)\/[^/?#]+\/?$/i.test(pathname);
+    }
+
+    if (providerKey === 'mallandrinhas') {
+      return /^\/author\/[^/?#]+\/?$/i.test(pathname);
     }
 
     if (providerKey !== 'xvideos') {
@@ -270,6 +365,28 @@ function isSafeVideoUrl(url) {
       return pathname === '/view_video.php';
     }
 
+    if (providerKey === 'mallandrinhas') {
+      if (!/^\/[^/?#]+\/?$/i.test(pathname)) {
+        return false;
+      }
+
+      const slug = pathname.replace(/^\//, '').replace(/\/$/, '');
+      const reserved = new Set([
+        '',
+        '15-anos',
+        'aviso-contato',
+        'bucetao',
+        'guia-salvador-2',
+        'incesto',
+        'page',
+        'parceria',
+        'porno-amador',
+        'videos'
+      ]);
+
+      return !reserved.has(slug);
+    }
+
     if (providerKey !== 'xvideos') {
       return false;
     }
@@ -285,6 +402,7 @@ module.exports = {
   ALLOWED_DATES,
   ALLOWED_DURATIONS,
   ALLOWED_QUALITIES,
+  AVAILABLE_PROVIDER_KEYS,
   DEFAULT_PROVIDER_PREFERENCES,
   normalizeSearchParams,
   normalizeProviderPreferences,

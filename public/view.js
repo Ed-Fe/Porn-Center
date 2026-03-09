@@ -10,6 +10,7 @@ import {
   loadProviderPreferences,
   loadStorage,
   pickPreferredFormat,
+  readProviderPreferencesFromControls,
   renderSiteHeader,
   saveStorage,
   saveProviderPreferences,
@@ -51,10 +52,13 @@ bootstrap().catch((error) => {
 async function bootstrap() {
   await setupHeaderSearch(controls);
   bindHeaderSearch(elements.searchForm, controls);
-  fillSearchControls(controls, { includePornhub: loadProviderPreferences().includePornhub });
-  elements.clearFiltersButton.addEventListener('click', () => fillSearchControls(controls, { includePornhub: loadProviderPreferences().includePornhub }));
-  controls.pornhubCheckbox?.addEventListener('change', () => {
-    saveProviderPreferences({ includePornhub: controls.pornhubCheckbox.checked });
+  fillSearchControls(controls, loadProviderPreferences());
+  elements.clearFiltersButton.addEventListener('click', () => fillSearchControls(controls, loadProviderPreferences()));
+  controls.providerCheckboxes.forEach((checkbox) => {
+    checkbox.addEventListener('change', () => {
+      const preferences = saveProviderPreferences(readProviderPreferencesFromControls(controls));
+      fillSearchControls(controls, preferences);
+    });
   });
   elements.favoriteButton.addEventListener('click', toggleFavorite);
 

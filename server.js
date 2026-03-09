@@ -13,6 +13,7 @@ const {
   isSafeCreatorUrl,
   isSafeVideoUrl,
   clampPage,
+  AVAILABLE_PROVIDER_KEYS,
   ALLOWED_SORTS,
   ALLOWED_DATES,
   ALLOWED_DURATIONS,
@@ -30,6 +31,12 @@ const {
   getVideoDataDirect: getPornhubVideoDataDirect,
   getCreatorDataDirect: getPornhubCreatorDataDirect
 } = require('./src/lib/pornhub-client');
+const {
+  searchVideosDirect: searchMallandrinhasVideosDirect,
+  getFeedVideosDirect: getMallandrinhasFeedVideosDirect,
+  getVideoDataDirect: getMallandrinhasVideoDataDirect,
+  getCreatorDataDirect: getMallandrinhasCreatorDataDirect
+} = require('./src/lib/mallandrinhas-client');
 
 function hasUsableVideoData(response) {
   if (!response || typeof response !== 'object') {
@@ -56,6 +63,10 @@ function createApp() {
       dates: ALLOWED_DATES,
       durations: ALLOWED_DURATIONS,
       qualities: ALLOWED_QUALITIES,
+      providers: AVAILABLE_PROVIDER_KEYS.map((providerKey) => ({
+        key: providerKey,
+        label: getSourceName(providerKey)
+      })),
       shortcuts: [
         { key: '/', description: 'Foca a busca' },
         { key: 'ArrowUp / ArrowDown', description: 'Navega entre os resultados' },
@@ -75,10 +86,18 @@ function createApp() {
     }
 
     try {
-      const providerTasks = [searchXVideos(params)];
+      const providerTasks = [];
+
+      if (providerPreferences.includeXVideos) {
+        providerTasks.push(searchXVideos(params));
+      }
 
       if (providerPreferences.includePornhub) {
         providerTasks.push(searchPornhub(params));
+      }
+
+      if (providerPreferences.includeMallandrinhas) {
+        providerTasks.push(searchMallandrinhas(params));
       }
 
       const settled = await Promise.allSettled(providerTasks);
@@ -95,6 +114,7 @@ function createApp() {
         page: params.pagination,
         items,
         totalOnPage: items.length,
+        providerPreferences,
         includePornhub: providerPreferences.includePornhub,
         providers: completedProviders.map((provider) => provider.providerKey),
         source: completedProviders.length > 1 ? 'mixed-providers' : completedProviders[0].source
@@ -112,10 +132,18 @@ function createApp() {
     const providerPreferences = normalizeProviderPreferences(req.query);
 
     try {
-      const providerTasks = [getXVideosFeed(page)];
+      const providerTasks = [];
+
+      if (providerPreferences.includeXVideos) {
+        providerTasks.push(getXVideosFeed(page));
+      }
 
       if (providerPreferences.includePornhub) {
         providerTasks.push(getPornhubFeed(page));
+      }
+
+      if (providerPreferences.includeMallandrinhas) {
+        providerTasks.push(getMallandrinhasFeed(page));
       }
 
       const settled = await Promise.allSettled(providerTasks);
@@ -131,6 +159,7 @@ function createApp() {
         page,
         items,
         totalOnPage: items.length,
+        providerPreferences,
         includePornhub: providerPreferences.includePornhub,
         providers: completedProviders.map((provider) => provider.providerKey),
         source: completedProviders.length > 1 ? 'mixed-feed' : completedProviders[0].source
@@ -157,12 +186,18 @@ function createApp() {
     try {
       const providerKey = getVideoProviderKey(videoUrl);
       const providerName = getSourceName(providerKey);
-      const { response, source } = providerKey === 'pornhub'
-        ? {
-            response: await getPornhubVideoDataDirect(videoUrl),
-            source: 'pornhub-direct'
-          }
-        : await getXVideosVideo(videoUrl);
+      let response;
+      let source;
+
+      if (providerKey === 'pornhub') {
+        response = await getPornhubVideoDataDirect(videoUrl);
+        source = 'pornhub-direct';
+      } else if (providerKey === 'mallandrinhas') {
+        response = await getMallandrinhasVideoDataDirect(videoUrl);
+        source = 'mallandrinhas-direct';
+      } else {
+        ({ response, source } = await getXVideosVideo(videoUrl));
+      }
 
       return res.json({
         video: normalizeVideoData({
@@ -199,9 +234,15 @@ function createApp() {
     try {
       const providerKey = getProviderKeyFromUrl(profileUrl);
       const providerName = getSourceName(providerKey);
-      const response = providerKey === 'pornhub'
-        ? await getPornhubCreatorDataDirect(profileUrl)
-        : await getCreatorDataDirect(profileUrl);
+      let response;
+
+      if (providerKey === 'pornhub') {
+        response = await getPornhubCreatorDataDirect(profileUrl);
+      } else if (providerKey === 'mallandrinhas') {
+        response = await getMallandrinhasCreatorDataDirect(profileUrl);
+      } else {
+        response = await getCreatorDataDirect(profileUrl);
+      }
 
       return res.json({
         performer: {
@@ -269,6 +310,16 @@ async function searchPornhub(params) {
   };
 }
 
+async function searchMallandrinhas(params) {
+  const response = await searchMallandrinhasVideosDirect(params);
+
+  return {
+    providerKey: 'mallandrinhas',
+    source: 'mallandrinhas-search',
+    items: normalizeSearchResults(response, { sourceKey: 'mallandrinhas', sourceName: 'Malandrinhas' })
+  };
+}
+
 async function getXVideosFeed(page) {
   return {
     providerKey: 'xvideos',
@@ -282,6 +333,14 @@ async function getPornhubFeed(page) {
     providerKey: 'pornhub',
     source: 'pornhub-feed',
     items: normalizeSearchResults(await getPornhubFeedVideosDirect({ page }), { sourceKey: 'pornhub', sourceName: 'Pornhub' })
+  };
+}
+
+async function getMallandrinhasFeed(page) {
+  return {
+    providerKey: 'mallandrinhas',
+    source: 'mallandrinhas-feed',
+    items: normalizeSearchResults(await getMallandrinhasFeedVideosDirect({ page }), { sourceKey: 'mallandrinhas', sourceName: 'Malandrinhas' })
   };
 }
 

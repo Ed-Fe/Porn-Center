@@ -37,14 +37,38 @@ const {
   extractMediaDefinitionsFromHtml
 } = require('../src/lib/pornhub-client');
 const {
+  buildSearchUrl: buildMallandrinhasSearchUrl,
+  buildFeedUrl: buildMallandrinhasFeedUrl,
+  parseSearchResultsFromHtml: parseMallandrinhasSearchResultsFromHtml
+} = require('../src/lib/mallandrinhas-client');
+const {
   isRetryableRequestError,
   requestWithCache
 } = require('../src/lib/request-cache');
 
 test('normalizeProviderPreferences respeita query e fallback', () => {
-  assert.deepEqual(normalizeProviderPreferences({ ph: '0' }), { includePornhub: false });
-  assert.deepEqual(normalizeProviderPreferences({}, { includePornhub: false }), { includePornhub: false });
-  assert.deepEqual(normalizeProviderPreferences({ includePornhub: '1' }), { includePornhub: true });
+  assert.deepEqual(normalizeProviderPreferences({ ph: '0', ml: '1', xv: '1' }), {
+    includeXVideos: true,
+    includePornhub: false,
+    includeMallandrinhas: true,
+    enabledProviders: ['xvideos', 'mallandrinhas']
+  });
+  assert.deepEqual(normalizeProviderPreferences({ providers: 'pornhub,mallandrinhas' }, {
+    includeXVideos: false,
+    includePornhub: false,
+    includeMallandrinhas: false
+  }), {
+    includeXVideos: false,
+    includePornhub: true,
+    includeMallandrinhas: true,
+    enabledProviders: ['pornhub', 'mallandrinhas']
+  });
+  assert.deepEqual(normalizeProviderPreferences({}, { includeXVideos: false, includePornhub: true, includeMallandrinhas: false }), {
+    includeXVideos: false,
+    includePornhub: true,
+    includeMallandrinhas: false,
+    enabledProviders: ['pornhub']
+  });
 });
 
 test('normalizeSearchParams sanitiza valores e remove filtros padrão', () => {
@@ -123,19 +147,23 @@ test('isSafeVideoUrl aceita domínios xvideos e rejeita domínios externos', () 
   assert.equal(isSafeVideoUrl('https://www.xvideos2.com/video123/demo'), true);
   assert.equal(isSafeVideoUrl('https://www.xvideos.com/prof-video-click/upload/loki06/abc123/demo'), true);
   assert.equal(isSafeVideoUrl('https://pt.pornhub.com/view_video.php?viewkey=123'), true);
+  assert.equal(isSafeVideoUrl('https://www.mallandrinhas.net/loira-novinha-fodendo-com-cinco-homens/'), true);
   assert.equal(isSafeVideoUrl('https://www.xvideos.com/models/demo'), false);
+  assert.equal(isSafeVideoUrl('https://www.mallandrinhas.net/author/iza-vip/'), false);
   assert.equal(isSafeVideoUrl('https://evil.example/video123/demo'), false);
 });
 
 test('getVideoProviderKey identifica o provedor pelo domínio', () => {
   assert.equal(getVideoProviderKey('https://www.xvideos2.com/video123/demo'), 'xvideos');
   assert.equal(getVideoProviderKey('https://www.pornhub.com/view_video.php?viewkey=abc123'), 'pornhub');
+  assert.equal(getVideoProviderKey('https://www.mallandrinhas.net/loira-novinha-fodendo-com-cinco-homens/'), 'mallandrinhas');
   assert.equal(getVideoProviderKey('https://example.com/video'), '');
 });
 
 test('getProviderKeyFromUrl também reconhece urls de perfis', () => {
   assert.equal(getProviderKeyFromUrl('https://www.xvideos.com/profiles/demo'), 'xvideos');
   assert.equal(getProviderKeyFromUrl('https://www.pornhub.com/model/demo'), 'pornhub');
+  assert.equal(getProviderKeyFromUrl('https://www.mallandrinhas.net/author/iza-vip/'), 'mallandrinhas');
 });
 
 test('isSafeCreatorUrl aceita perfis suportados e rejeita rotas soltas', () => {
@@ -143,6 +171,7 @@ test('isSafeCreatorUrl aceita perfis suportados e rejeita rotas soltas', () => {
   assert.equal(isSafeCreatorUrl('https://www.xvideos.com/demo_user'), true);
   assert.equal(isSafeCreatorUrl('https://www.xvideos.com/video.abc/demo'), false);
   assert.equal(isSafeCreatorUrl('https://www.pornhub.com/pornstar/demo'), true);
+  assert.equal(isSafeCreatorUrl('https://www.mallandrinhas.net/author/iza-vip/'), true);
   assert.equal(isSafeCreatorUrl('https://www.pornhub.com/video/search?search=test'), false);
 });
 
@@ -337,6 +366,16 @@ test('buildPornhubFeedUrl monta a url do feed com paginação', () => {
   assert.equal(buildPornhubFeedUrl({ page: 4 }), 'https://www.pornhub.com/video?page=4');
 });
 
+test('buildMallandrinhasSearchUrl monta a busca com paginação WordPress', () => {
+  assert.equal(buildMallandrinhasSearchUrl({ search: 'novinha', pagination: 1 }), 'https://www.mallandrinhas.net/?s=novinha');
+  assert.equal(buildMallandrinhasSearchUrl({ search: 'novinha', pagination: 3 }), 'https://www.mallandrinhas.net/page/3/?s=novinha');
+});
+
+test('buildMallandrinhasFeedUrl monta o feed com paginação WordPress', () => {
+  assert.equal(buildMallandrinhasFeedUrl({ page: 1 }), 'https://www.mallandrinhas.net/');
+  assert.equal(buildMallandrinhasFeedUrl({ page: 5 }), 'https://www.mallandrinhas.net/page/5/');
+});
+
 test('buildCreatorUploadsUrl monta a rota de uploads do Pornhub', () => {
   assert.equal(buildCreatorUploadsUrl('https://www.pornhub.com/pornstar/demo'), 'https://www.pornhub.com/pornstar/demo/videos/upload');
   assert.equal(buildCreatorUploadsUrl('https://www.pornhub.com/model/demo/videos'), 'https://www.pornhub.com/model/demo/videos/upload');
@@ -393,6 +432,29 @@ test('parseCreatorUploadsFromHtml filtra uploads corretos do Pornhub', () => {
   assert.equal(items.length, 1);
   assert.equal(items[0].video, 'https://www.pornhub.com/view_video.php?viewkey=abc123');
   assert.equal(items[0].uploaderName, 'Demo Star');
+});
+
+test('parseMallandrinhasSearchResultsFromHtml encontra posts do catálogo', () => {
+  const html = `
+    <main>
+      <article class="post type-post">
+        <h2 class="entry-title"><a href="/loira-novinha-fodendo-com-cinco-homens/">Loira novinha fodendo com cinco homens</a></h2>
+        <a href="/author/iza-vip/">Isabella Vip</a>
+        <img src="https://www.mallandrinhas.net/wp-content/uploads/thumb.jpg" />
+        <p>1 min read</p>
+      </article>
+      <article class="post type-page">
+        <h2 class="entry-title"><a href="/aviso-contato/">Aviso</a></h2>
+      </article>
+    </main>
+  `;
+
+  const items = parseMallandrinhasSearchResultsFromHtml(html);
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].video, 'https://www.mallandrinhas.net/loira-novinha-fodendo-com-cinco-homens/');
+  assert.equal(items[0].title, 'Loira novinha fodendo com cinco homens');
+  assert.equal(items[0].sourceKey, 'mallandrinhas');
 });
 
 test('extractPornhubStructuredVideoData lê json-ld do detalhe', () => {

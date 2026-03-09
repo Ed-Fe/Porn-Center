@@ -4,11 +4,14 @@ import {
   createSearchControls,
   fetchJson,
   fillSearchControls,
+  getSourceLabel,
   loadProviderPreferences,
   persistRecentSearch,
+  readProviderPreferencesFromControls,
   renderSiteHeader,
   renderQuickCategories,
   renderVideoCards,
+  resolveProviderPreferences,
   saveProviderPreferences,
   setStatus,
   setupHeaderSearch
@@ -41,7 +44,7 @@ const state = {
   duration: params.get('duration') || 'allduration',
   quality: params.get('quality') || 'all',
   watched: params.get('watched') || '',
-  ph: params.has('ph') ? params.get('ph') || '' : (loadProviderPreferences().includePornhub ? '1' : '')
+  providerPreferences: resolveProviderPreferences(params)
 };
 
 bootstrap().catch((error) => {
@@ -51,17 +54,20 @@ bootstrap().catch((error) => {
 async function bootstrap() {
   await setupHeaderSearch(controls);
   bindHeaderSearch(elements.searchForm, controls);
-  fillSearchControls(controls, state);
+  fillSearchControls(controls, { ...state, ...state.providerPreferences });
   renderQuickCategories(elements.quickCategories);
   elements.clearFiltersButton.addEventListener('click', () => {
-    fillSearchControls(controls, { q: state.q, ph: state.ph });
+    fillSearchControls(controls, { q: state.q, ...state.providerPreferences });
   });
-  controls.pornhubCheckbox?.addEventListener('change', () => {
-    state.ph = saveProviderPreferences({ includePornhub: controls.pornhubCheckbox.checked }).includePornhub ? '1' : '';
-    state.page = 1;
-    if (state.q) {
-      window.location.href = buildExploreHref(state);
-    }
+  controls.providerCheckboxes.forEach((checkbox) => {
+    checkbox.addEventListener('change', () => {
+      state.providerPreferences = saveProviderPreferences(readProviderPreferencesFromControls(controls));
+      fillSearchControls(controls, { ...state, ...state.providerPreferences });
+      state.page = 1;
+      if (state.q) {
+        window.location.href = buildExploreHref({ ...state, ...state.providerPreferences });
+      }
+    });
   });
   elements.prevPageButton.addEventListener('click', () => navigatePage(-1));
   elements.nextPageButton.addEventListener('click', () => navigatePage(1));
@@ -83,20 +89,18 @@ async function loadResults() {
     date: state.date,
     duration: state.duration,
     quality: state.quality,
-    page: String(state.page)
+    page: String(state.page),
+    providers: state.providerPreferences.enabledProviders.join(',')
   });
 
   if (state.watched === 'h') {
     search.set('watched', 'h');
   }
 
-  if (state.ph === '1') {
-    search.set('ph', '1');
-  }
-
   const data = await fetchJson(`/api/search?${search.toString()}`);
   renderVideoCards(elements.resultsList, data.items, 'Nenhum resultado encontrado para esta busca.');
-  elements.resultSummary.textContent = `${data.totalOnPage} resultado(s) para “${data.query}” ${state.ph === '1' ? 'em XVideos + Pornhub' : 'no XVideos'}.`;
+  const loadedProviders = (data.providers || []).map((providerKey) => getSourceLabel(providerKey)).join(' + ');
+  elements.resultSummary.textContent = `${data.totalOnPage} resultado(s) para “${data.query}”${loadedProviders ? ` em ${loadedProviders}` : ''}.`;
   elements.pageIndicator.textContent = `Página ${state.page}`;
   elements.prevPageButton.disabled = state.page <= 1;
   persistRecentSearch(state.q);
@@ -107,5 +111,5 @@ function navigatePage(offset) {
   if (nextPage === state.page) return;
 
   state.page = nextPage;
-  window.location.href = buildExploreHref(state);
+  window.location.href = buildExploreHref({ ...state, ...state.providerPreferences });
 }

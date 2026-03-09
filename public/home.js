@@ -3,8 +3,10 @@ import {
   createSearchControls,
   fetchJson,
   fillSearchControls,
+  getSourceLabel,
   loadProviderPreferences,
   loadStorage,
+  readProviderPreferencesFromControls,
   renderSiteHeader,
   renderQuickCategories,
   renderRecentSearches,
@@ -36,7 +38,7 @@ const elements = {
 
 const state = {
   page: 1,
-  includePornhub: loadProviderPreferences().includePornhub
+  providerPreferences: loadProviderPreferences()
 };
 
 bootstrap().catch((error) => {
@@ -46,19 +48,22 @@ bootstrap().catch((error) => {
 async function bootstrap() {
   await setupHeaderSearch(controls);
   bindHeaderSearch(elements.searchForm, controls);
-  fillSearchControls(controls, { includePornhub: state.includePornhub });
+  fillSearchControls(controls, state.providerPreferences);
   renderRecentSearches(elements.recentSearches, loadStorage('bx_recent_searches', []));
   renderQuickCategories(elements.quickCategories);
-  elements.clearFiltersButton.addEventListener('click', () => fillSearchControls(controls, { includePornhub: state.includePornhub }));
+  elements.clearFiltersButton.addEventListener('click', () => fillSearchControls(controls, state.providerPreferences));
   elements.clearRecentButton.addEventListener('click', () => {
     localStorage.removeItem('bx_recent_searches');
     renderRecentSearches(elements.recentSearches, []);
     setStatus(elements.statusMessage, 'Histórico de buscas limpo.', true);
   });
-  controls.pornhubCheckbox?.addEventListener('change', async () => {
-    state.includePornhub = saveProviderPreferences({ includePornhub: controls.pornhubCheckbox.checked }).includePornhub;
-    state.page = 1;
-    await loadFeed();
+  controls.providerCheckboxes.forEach((checkbox) => {
+    checkbox.addEventListener('change', async () => {
+      state.providerPreferences = saveProviderPreferences(readProviderPreferencesFromControls(controls));
+      fillSearchControls(controls, state.providerPreferences);
+      state.page = 1;
+      await loadFeed();
+    });
   });
   elements.prevPageButton.addEventListener('click', () => changePage(-1));
   elements.nextPageButton.addEventListener('click', () => changePage(1));
@@ -68,12 +73,11 @@ async function bootstrap() {
 async function loadFeed() {
   setStatus(elements.statusMessage, 'Carregando feed inicial...');
   const search = new URLSearchParams({ page: String(state.page) });
-  if (state.includePornhub) {
-    search.set('ph', '1');
-  }
+  search.set('providers', state.providerPreferences.enabledProviders.join(','));
   const data = await fetchJson(`/api/feed?${search.toString()}`);
   renderVideoCards(elements.resultsList, data.items, 'Nenhum vídeo disponível no feed inicial.');
-  elements.resultSummary.textContent = `${data.totalOnPage} vídeo(s) carregados no feed ${state.includePornhub ? 'misto (XVideos + Pornhub)' : 'do XVideos'}.`;
+  const loadedProviders = (data.providers || []).map((providerKey) => getSourceLabel(providerKey)).join(' + ');
+  elements.resultSummary.textContent = `${data.totalOnPage} vídeo(s) carregados no feed ${loadedProviders ? `de ${loadedProviders}` : 'selecionado'}.`;
   elements.pageIndicator.textContent = `Página ${state.page}`;
   elements.prevPageButton.disabled = state.page <= 1;
   setStatus(elements.statusMessage, '');

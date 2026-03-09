@@ -256,7 +256,7 @@ button,
 
 .filter-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr)) auto auto auto;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto minmax(220px, 1.3fr) auto;
 }
 
 .field {
@@ -286,6 +286,29 @@ select {
   align-items: center;
   align-self: end;
   min-height: 48px;
+}
+
+.provider-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0.8rem 1rem;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.provider-fieldset legend {
+  padding: 0 0.4rem;
+  font-weight: 700;
+}
+
+.provider-options {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.provider-checkbox-row {
+  min-height: 0;
 }
 
 .header-checkbox-row input {
@@ -676,6 +699,10 @@ kbd {
 
   .filter-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .provider-fieldset {
+    grid-column: 1 / -1;
   }
 }
 
