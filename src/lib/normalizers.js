@@ -2,11 +2,12 @@ const ALLOWED_SORTS = ['relevance', 'uploaddate', 'rating', 'length', 'views', '
 const ALLOWED_DATES = ['all', 'today', 'week', 'month', '3month', '6month'];
 const ALLOWED_DURATIONS = ['allduration', '1-3min', '3-10min', '10min_more', '10-20min', '20min_more'];
 const ALLOWED_QUALITIES = ['all', 'hd', '1080p'];
+const ALLOWED_LOCALES = ['pt-BR', 'en-US'];
+const DEFAULT_LOCALE = 'pt-BR';
 const AVAILABLE_PROVIDER_KEYS = ['xvideos', 'pornhub', 'mallandrinhas'];
 const DEFAULT_PROVIDER_PREFERENCES = Object.freeze({
   includeXVideos: true,
-  includePornhub: true
-  ,
+  includePornhub: true,
   includeMallandrinhas: true
 });
 
@@ -155,17 +156,23 @@ function normalizeSearchParams(query = {}) {
   const filterQuality = pickAllowed(String(query.quality ?? query.filterQuality ?? '').trim(), ALLOWED_QUALITIES, 'all');
   const watched = String(query.watched ?? query.viewWatched ?? '').trim() === 'h' ? 'h' : undefined;
   const pagination = clampPage(Number(query.page ?? query.pagination ?? 1));
+  const locale = pickAllowed(String(query.locale ?? '').trim(), ALLOWED_LOCALES, DEFAULT_LOCALE);
 
   return {
     search,
     sort,
     pagination,
+    locale,
     proxy: false,
     ...(filterDate !== 'all' ? { filterDate } : {}),
     ...(filterDuration !== 'allduration' ? { filterDuration } : {}),
     ...(filterQuality !== 'all' ? { filterQuality } : {}),
     ...(watched ? { viewWatched: watched } : {})
   };
+}
+
+function normalizeLocale(value, fallback = DEFAULT_LOCALE) {
+  return pickAllowed(String(value ?? '').trim(), ALLOWED_LOCALES, fallback);
 }
 
 function normalizeSearchResults(results = [], options = {}) {
@@ -402,9 +409,12 @@ module.exports = {
   ALLOWED_DATES,
   ALLOWED_DURATIONS,
   ALLOWED_QUALITIES,
+  ALLOWED_LOCALES,
+  DEFAULT_LOCALE,
   AVAILABLE_PROVIDER_KEYS,
   DEFAULT_PROVIDER_PREFERENCES,
   normalizeSearchParams,
+  normalizeLocale,
   normalizeProviderPreferences,
   normalizeSearchResults,
   mixSearchResults,

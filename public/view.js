@@ -7,6 +7,7 @@ import {
   fillSearchControls,
   getMimeTypeForUrl,
   getSourceLabel,
+  resolveLocalePreference,
   loadProviderPreferences,
   loadStorage,
   pickPreferredFormat,
@@ -14,6 +15,7 @@ import {
   renderSiteHeader,
   saveStorage,
   saveProviderPreferences,
+  saveLocalePreference,
   setStatus,
   setupHeaderSearch
 } from './common.js';
@@ -32,6 +34,7 @@ const fallbackUploader = params.get('uploader') || '';
 const fallbackProfile = params.get('profile') || '';
 const fallbackDuration = params.get('duration') || '';
 const fallbackSource = params.get('source') || '';
+let activeLocale = resolveLocalePreference(params);
 
 const elements = {
   searchForm: document.querySelector('#searchForm'),
@@ -44,21 +47,28 @@ const elements = {
 
 let currentFavoritePayload = null;
 let activeHls = null;
+let hasRefreshedFormatsAfterFailure = false;
 
 bootstrap().catch((error) => {
   setStatus(elements.statusMessage, `Erro ao iniciar a página: ${error.message}`, true);
 });
 
 async function bootstrap() {
+  activeLocale = saveLocalePreference(activeLocale);
   await setupHeaderSearch(controls);
   bindHeaderSearch(elements.searchForm, controls);
-  fillSearchControls(controls, loadProviderPreferences());
+  fillSearchControls(controls, { ...loadProviderPreferences(), locale: activeLocale });
   elements.clearFiltersButton.addEventListener('click', () => fillSearchControls(controls, loadProviderPreferences()));
   controls.providerCheckboxes.forEach((checkbox) => {
     checkbox.addEventListener('change', () => {
       const preferences = saveProviderPreferences(readProviderPreferencesFromControls(controls));
       fillSearchControls(controls, preferences);
     });
+  });
+  controls.localeSelect.addEventListener('change', () => {
+    const selectedLocale = saveLocalePreference(controls.localeSelect.value);
+    activeLocale = selectedLocale;
+    fillSearchControls(controls, { ...loadProviderPreferences(), locale: selectedLocale });
   });
   elements.favoriteButton.addEventListener('click', toggleFavorite);
 
@@ -72,13 +82,21 @@ async function bootstrap() {
   await loadVideo();
 }
 
-async function loadVideo() {
-  const response = await fetchJson(`/api/video?url=${encodeURIComponent(videoUrl)}`);
+async function loadVideo(options = {}) {
+  const forceRefresh = options.forceRefresh === true;
+  const statusMessage = String(options.statusMessage || '');
+  const response = await fetchJson(`/api/video?url=${encodeURIComponent(videoUrl)}&locale=${encodeURIComponent(activeLocale)}${forceRefresh ? `&_=${Date.now()}` : ''}`);
   const video = response.video;
   const title = video.title || fallbackTitle || 'Sem título';
   const cover = video.thumbnails[0] || fallbackThumb || '';
   const uploadDate = video.uploadDate ? new Date(video.uploadDate).toLocaleString('pt-BR') : 'Não informado';
   const preferredFormat = pickPreferredFormat(video.formats);
+
+  if (activeHls) {
+    activeHls.destroy();
+    activeHls = null;
+  }
+
   currentFavoritePayload = {
     title,
     videoUrl,
@@ -137,7 +155,7 @@ async function loadVideo() {
           <p><strong>Data:</strong> ${escapeHtml(uploadDate)}</p>
           <p><strong>Visualizações:</strong> ${escapeHtml(video.views || 'Não informado')}</p>
           <p><strong>Origem:</strong> ${escapeHtml(video.sourceName || getSourceLabel(fallbackSource))}</p>
-          ${fallbackProfile ? `<p><a class="text-link detail-inline-link" href="${escapeHtml(buildStarHref({ uploaderProfile: fallbackProfile, uploaderName: fallbackUploader, sourceKey: video.sourceKey || fallbackSource }))}">Ver página da estrela</a></p>` : ''}
+          ${fallbackProfile ? `<p><a class="text-link detail-inline-link" href="${escapeHtml(buildStarHref({ uploaderProfile: fallbackProfile, uploaderName: fallbackUploader, sourceKey: video.sourceKey || fallbackSource, locale: activeLocale }))}">Ver página da estrela</a></p>` : ''}
           <div class="details-actions">
             <a class="text-link" href="${escapeHtml(videoUrl)}" target="_blank" rel="noreferrer noopener">Abrir página original</a>
             <button class="secondary" type="button" id="copyVideoLinkButton">Copiar link</button>
@@ -152,7 +170,46 @@ async function loadVideo() {
     </article>
   `;
 
-  bindViewInteractions(video.formats, preferredFormat);
+  bindViewInteractions(video, preferredFormat, {
+    refreshFormats: async (reason = 'As fontes do vídeo parecem ter expirado.') => {
+      if (hasRefreshedFormatsAfterFailure) {
+        return false;
+      }
+
+      hasRefreshedFormatsAfterFailure = true;
+
+      try {
+        await loadVideo({
+          forceRefresh: true,
+          statusMessage: `${reason} Atualizamos os links do player e tentamos novamente.`
+        });
+        return true;
+      } catch (error) {
+        setStatus(elements.statusMessage, `Não foi possível atualizar as fontes do player: ${error.message}`, true);
+        return false;
+      }
+    }
+  });
+
+  if (statusMessage) {
+    setStatus(elements.statusMessage, statusMessage, true);
+  }
+}
+
+function hasLikelyExpiringMediaUrl(url = '') {
+  try {
+    const parsed = new URL(url);
+
+    return ['validto', 'ttl', 'expires', 'expiry', 'hash'].some((key) => parsed.searchParams.has(key));
+  } catch {
+    return false;
+  }
+}
+
+function shouldRefreshFormatsOnFailure(video = {}) {
+  const formats = Array.isArray(video.formats) ? video.formats : [];
+
+  return video.sourceKey === 'pornhub' || formats.some((format) => hasLikelyExpiringMediaUrl(format?.url));
 }
 
 function applyPlayerFormat(player, sourceSelect, playerStatus, openSourceLink, format, onHlsFatalError) {
@@ -202,15 +259,34 @@ function applyPlayerFormat(player, sourceSelect, playerStatus, openSourceLink, f
   }
 }
 
-function bindViewInteractions(formats = [], initialFormat = null) {
+function bindViewInteractions(video = {}, initialFormat = null, options = {}) {
+  const formats = Array.isArray(video.formats) ? video.formats : [];
   const copyButton = document.querySelector('#copyVideoLinkButton');
   const player = document.querySelector('#detailsVideoPlayer');
   const sourceSelect = document.querySelector('#playerSourceSelect');
   const playerStatus = document.querySelector('#playerStatus');
   const openSourceLink = document.querySelector('#openSourceLink');
   const triedFormats = new Set();
+  const allowRefreshOnFailure = shouldRefreshFormatsOnFailure(video);
+  const refreshFormats = typeof options.refreshFormats === 'function' ? options.refreshFormats : null;
+  let isRefreshingFormats = false;
 
-  const switchToNextFormat = (reason = 'A fonte atual falhou.') => {
+  const refreshFormatsOnce = async (reason = 'As fontes do vídeo parecem ter expirado.') => {
+    if (!allowRefreshOnFailure || !refreshFormats || isRefreshingFormats) {
+      return false;
+    }
+
+    isRefreshingFormats = true;
+    setStatus(elements.statusMessage, `${reason} Atualizando links do player...`, true);
+
+    try {
+      return await refreshFormats(reason);
+    } finally {
+      isRefreshingFormats = false;
+    }
+  };
+
+  const switchToNextFormat = async (reason = 'A fonte atual falhou.') => {
     markCurrentFormatAsTried();
     const fallbackFormat = formats.find((format) => format?.url && !triedFormats.has(format.url));
 
@@ -218,6 +294,10 @@ function bindViewInteractions(formats = [], initialFormat = null) {
       triedFormats.add(fallbackFormat.url);
       applyPlayerFormat(player, sourceSelect, playerStatus, openSourceLink, fallbackFormat);
       setStatus(elements.statusMessage, `${reason} Tentando automaticamente ${fallbackFormat.label}.`, true);
+      return true;
+    }
+
+    if (await refreshFormatsOnce(reason)) {
       return true;
     }
 
@@ -237,7 +317,7 @@ function bindViewInteractions(formats = [], initialFormat = null) {
       playerStatus,
       openSourceLink,
       format,
-      () => switchToNextFormat('A transmissão HLS falhou.')
+      () => void switchToNextFormat('A transmissão HLS falhou.')
     );
 
     if (announcement) {
@@ -275,7 +355,7 @@ function bindViewInteractions(formats = [], initialFormat = null) {
   });
 
   player?.addEventListener('error', () => {
-    switchToNextFormat('A fonte atual falhou.');
+    void switchToNextFormat('A fonte atual falhou.');
   });
 
   if (initialFormat?.url) {

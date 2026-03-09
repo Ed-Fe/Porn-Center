@@ -1,4 +1,5 @@
 const path = require('path');
+const axios = require('axios');
 const express = require('express');
 const xvideos = require('xvideos-scraper');
 const {
@@ -17,7 +18,10 @@ const {
   ALLOWED_SORTS,
   ALLOWED_DATES,
   ALLOWED_DURATIONS,
-  ALLOWED_QUALITIES
+  ALLOWED_QUALITIES,
+  ALLOWED_LOCALES,
+  DEFAULT_LOCALE,
+  normalizeLocale
 } = require('./src/lib/normalizers');
 const {
   searchVideosDirect,
@@ -38,6 +42,18 @@ const {
   getCreatorDataDirect: getMallandrinhasCreatorDataDirect
 } = require('./src/lib/mallandrinhas-client');
 
+const MEDIA_PROXY_ALLOWED_HOSTS = [
+  /(^|\.)pornhub\.com$/i,
+  /(^|\.)phncdn\.com$/i,
+  /(^|\.)phprcdn\.com$/i
+];
+
+const MEDIA_PROXY_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+  'Accept-Language': 'en-US,en;q=0.9,pt-BR;q=0.8',
+  'Cookie': 'age_verified=1; platform=pc'
+};
+
 function hasUsableVideoData(response) {
   if (!response || typeof response !== 'object') {
     return false;
@@ -48,6 +64,69 @@ function hasUsableVideoData(response) {
   const hasContent = Boolean(response.contentUrl);
 
   return hasTitle || hasThumbnail || hasContent;
+}
+
+function isSafeMediaProxyUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    const isHttp = parsed.protocol === 'http:' || parsed.protocol === 'https:';
+
+    if (!isHttp) {
+      return false;
+    }
+
+    return MEDIA_PROXY_ALLOWED_HOSTS.some((pattern) => pattern.test(parsed.hostname));
+  } catch {
+    return false;
+  }
+}
+
+function buildMediaProxyUrl(mediaUrl, sourceUrl = '') {
+  const params = new URLSearchParams();
+  params.set('url', String(mediaUrl || ''));
+
+  if (sourceUrl) {
+    params.set('source', String(sourceUrl));
+  }
+
+  return `/api/media-proxy?${params.toString()}`;
+}
+
+function rewriteM3u8Manifest(manifestText, manifestUrl, sourceUrl = '') {
+  const manifestBase = new URL(manifestUrl);
+
+  return String(manifestText)
+    .split(/\r?\n/)
+    .map((line) => {
+      const trimmed = line.trim();
+
+      if (!trimmed) {
+        return line;
+      }
+
+      if (trimmed.startsWith('#EXT-X-KEY') && trimmed.includes('URI="')) {
+        return line.replace(/URI="([^"]+)"/, (_match, uri) => {
+          try {
+            const absolute = new URL(uri, manifestBase).toString();
+            return `URI="${buildMediaProxyUrl(absolute, sourceUrl)}"`;
+          } catch {
+            return `URI="${uri}"`;
+          }
+        });
+      }
+
+      if (trimmed.startsWith('#')) {
+        return line;
+      }
+
+      try {
+        const absolute = new URL(trimmed, manifestBase).toString();
+        return buildMediaProxyUrl(absolute, sourceUrl);
+      } catch {
+        return line;
+      }
+    })
+    .join('\n');
 }
 
 function createApp() {
@@ -63,6 +142,8 @@ function createApp() {
       dates: ALLOWED_DATES,
       durations: ALLOWED_DURATIONS,
       qualities: ALLOWED_QUALITIES,
+      locales: ALLOWED_LOCALES,
+      defaultLocale: DEFAULT_LOCALE,
       providers: AVAILABLE_PROVIDER_KEYS.map((providerKey) => ({
         key: providerKey,
         label: getSourceName(providerKey)
@@ -89,11 +170,11 @@ function createApp() {
       const providerTasks = [];
 
       if (providerPreferences.includeXVideos) {
-        providerTasks.push(searchXVideos(params));
+        providerTasks.push(searchXVideos(params, { locale: params.locale }));
       }
 
       if (providerPreferences.includePornhub) {
-        providerTasks.push(searchPornhub(params));
+        providerTasks.push(searchPornhub(params, { locale: params.locale }));
       }
 
       if (providerPreferences.includeMallandrinhas) {
@@ -117,7 +198,8 @@ function createApp() {
         providerPreferences,
         includePornhub: providerPreferences.includePornhub,
         providers: completedProviders.map((provider) => provider.providerKey),
-        source: completedProviders.length > 1 ? 'mixed-providers' : completedProviders[0].source
+        source: completedProviders.length > 1 ? 'mixed-providers' : completedProviders[0].source,
+        locale: params.locale
       });
     } catch (error) {
       return res.status(500).json({
@@ -130,16 +212,17 @@ function createApp() {
   app.get('/api/feed', async (req, res) => {
     const page = clampPage(Number(req.query.page ?? 1));
     const providerPreferences = normalizeProviderPreferences(req.query);
+    const locale = normalizeLocale(req.query.locale, DEFAULT_LOCALE);
 
     try {
       const providerTasks = [];
 
       if (providerPreferences.includeXVideos) {
-        providerTasks.push(getXVideosFeed(page));
+        providerTasks.push(getXVideosFeed(page, { locale }));
       }
 
       if (providerPreferences.includePornhub) {
-        providerTasks.push(getPornhubFeed(page));
+        providerTasks.push(getPornhubFeed(page, { locale }));
       }
 
       if (providerPreferences.includeMallandrinhas) {
@@ -162,7 +245,8 @@ function createApp() {
         providerPreferences,
         includePornhub: providerPreferences.includePornhub,
         providers: completedProviders.map((provider) => provider.providerKey),
-        source: completedProviders.length > 1 ? 'mixed-feed' : completedProviders[0].source
+        source: completedProviders.length > 1 ? 'mixed-feed' : completedProviders[0].source,
+        locale
       });
     } catch (error) {
       return res.status(500).json({
@@ -174,6 +258,7 @@ function createApp() {
 
   app.get('/api/video', async (req, res) => {
     const videoUrl = String(req.query.url ?? '').trim();
+    const locale = normalizeLocale(req.query.locale, DEFAULT_LOCALE);
 
     if (!videoUrl) {
       return res.status(400).json({ error: 'Informe a URL do vídeo.' });
@@ -190,17 +275,16 @@ function createApp() {
       let source;
 
       if (providerKey === 'pornhub') {
-        response = await getPornhubVideoDataDirect(videoUrl);
+        response = await getPornhubVideoDataDirect(videoUrl, { locale });
         source = 'pornhub-direct';
       } else if (providerKey === 'mallandrinhas') {
         response = await getMallandrinhasVideoDataDirect(videoUrl);
         source = 'mallandrinhas-direct';
       } else {
-        ({ response, source } = await getXVideosVideo(videoUrl));
+        ({ response, source } = await getXVideosVideo(videoUrl, { locale }));
       }
 
-      return res.json({
-        video: normalizeVideoData({
+      const normalizedVideo = normalizeVideoData({
           ...response,
           url: videoUrl,
           mainEntityOfPage: videoUrl
@@ -208,9 +292,23 @@ function createApp() {
           sourceKey: providerKey,
           sourceName: providerName,
           sourceUrl: videoUrl
-        }),
+        });
+
+      const video = providerKey === 'pornhub'
+        ? {
+            ...normalizedVideo,
+            formats: normalizedVideo.formats.map((format) => ({
+              ...format,
+              url: buildMediaProxyUrl(format.url, videoUrl)
+            }))
+          }
+        : normalizedVideo;
+
+      return res.json({
+        video,
         provider: providerKey,
-        source
+        source,
+        locale
       });
     } catch (error) {
       return res.status(500).json({
@@ -222,6 +320,7 @@ function createApp() {
 
   app.get('/api/star', async (req, res) => {
     const profileUrl = String(req.query.url ?? '').trim();
+    const locale = normalizeLocale(req.query.locale, DEFAULT_LOCALE);
 
     if (!profileUrl) {
       return res.status(400).json({ error: 'Informe a URL da estrela.' });
@@ -237,11 +336,11 @@ function createApp() {
       let response;
 
       if (providerKey === 'pornhub') {
-        response = await getPornhubCreatorDataDirect(profileUrl);
+        response = await getPornhubCreatorDataDirect(profileUrl, { locale });
       } else if (providerKey === 'mallandrinhas') {
         response = await getMallandrinhasCreatorDataDirect(profileUrl);
       } else {
-        response = await getCreatorDataDirect(profileUrl);
+        response = await getCreatorDataDirect(profileUrl, { locale });
       }
 
       return res.json({
@@ -252,11 +351,66 @@ function createApp() {
         },
         items: normalizeSearchResults(response.items, { sourceKey: providerKey, sourceName: providerName }),
         totalOnPage: response.items.length,
-        source: `${providerKey}-creator`
+        source: `${providerKey}-creator`,
+        locale
       });
     } catch (error) {
       return res.status(500).json({
         error: 'Falha ao carregar os dados da estrela.',
+        details: error.message
+      });
+    }
+  });
+
+  app.get('/api/media-proxy', async (req, res) => {
+    const targetUrl = String(req.query.url ?? '').trim();
+    const sourceUrl = String(req.query.source ?? '').trim();
+
+    if (!targetUrl) {
+      return res.status(400).json({ error: 'Informe a URL de mídia.' });
+    }
+
+    if (!isSafeMediaProxyUrl(targetUrl)) {
+      return res.status(400).json({ error: 'A URL de mídia informada não é suportada.' });
+    }
+
+    try {
+      const response = await axios.get(targetUrl, {
+        responseType: 'arraybuffer',
+        timeout: 30000,
+        maxRedirects: 5,
+        headers: {
+          ...MEDIA_PROXY_HEADERS,
+          Referer: isSafeVideoUrl(sourceUrl) ? sourceUrl : 'https://www.pornhub.com/',
+          ...(req.headers.range ? { Range: String(req.headers.range) } : {})
+        },
+        validateStatus: (status) => status >= 200 && status < 400
+      });
+
+      const contentType = String(response.headers['content-type'] || '').toLowerCase();
+      const isManifest = /\.m3u8(?:$|\?)/i.test(targetUrl) || contentType.includes('mpegurl');
+
+      if (isManifest) {
+        const manifest = Buffer.from(response.data).toString('utf8');
+        const rewritten = rewriteM3u8Manifest(manifest, targetUrl, sourceUrl);
+
+        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
+        res.setHeader('Cache-Control', 'private, max-age=20');
+        return res.status(200).send(rewritten);
+      }
+
+      const passthroughHeaders = ['content-type', 'content-length', 'content-range', 'accept-ranges'];
+      for (const headerName of passthroughHeaders) {
+        const value = response.headers[headerName];
+        if (value) {
+          res.setHeader(headerName, value);
+        }
+      }
+
+      return res.status(response.status).send(Buffer.from(response.data));
+    } catch (error) {
+      return res.status(502).json({
+        error: 'Falha ao carregar a mídia remota.',
         details: error.message
       });
     }
@@ -289,8 +443,8 @@ function createApp() {
   return app;
 }
 
-async function searchXVideos(params) {
-  const fallbackResponse = await searchVideosDirect(params);
+async function searchXVideos(params, options = {}) {
+  const fallbackResponse = await searchVideosDirect(params, options);
   const items = normalizeSearchResults(fallbackResponse, { sourceKey: 'xvideos', sourceName: 'XVideos' });
 
   return {
@@ -300,8 +454,8 @@ async function searchXVideos(params) {
   };
 }
 
-async function searchPornhub(params) {
-  const response = await searchPornhubVideosDirect(params);
+async function searchPornhub(params, options = {}) {
+  const response = await searchPornhubVideosDirect(params, options);
 
   return {
     providerKey: 'pornhub',
@@ -320,19 +474,19 @@ async function searchMallandrinhas(params) {
   };
 }
 
-async function getXVideosFeed(page) {
+async function getXVideosFeed(page, options = {}) {
   return {
     providerKey: 'xvideos',
     source: 'direct-feed',
-    items: normalizeSearchResults(await getFeedVideosDirect({ page }), { sourceKey: 'xvideos', sourceName: 'XVideos' })
+    items: normalizeSearchResults(await getFeedVideosDirect({ page }, options), { sourceKey: 'xvideos', sourceName: 'XVideos' })
   };
 }
 
-async function getPornhubFeed(page) {
+async function getPornhubFeed(page, options = {}) {
   return {
     providerKey: 'pornhub',
     source: 'pornhub-feed',
-    items: normalizeSearchResults(await getPornhubFeedVideosDirect({ page }), { sourceKey: 'pornhub', sourceName: 'Pornhub' })
+    items: normalizeSearchResults(await getPornhubFeedVideosDirect({ page }, options), { sourceKey: 'pornhub', sourceName: 'Pornhub' })
   };
 }
 
@@ -344,7 +498,7 @@ async function getMallandrinhasFeed(page) {
   };
 }
 
-async function getXVideosVideo(videoUrl) {
+async function getXVideosVideo(videoUrl, options = {}) {
   let response;
   let source = 'xvideos-scraper';
 
@@ -358,7 +512,7 @@ async function getXVideosVideo(videoUrl) {
   }
 
   if (!hasUsableVideoData(response)) {
-    response = await getVideoDataDirect(videoUrl);
+    response = await getVideoDataDirect(videoUrl, options);
     source = 'direct-fallback';
   }
 
@@ -374,4 +528,9 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createApp };
+module.exports = {
+  createApp,
+  isSafeMediaProxyUrl,
+  buildMediaProxyUrl,
+  rewriteM3u8Manifest
+};

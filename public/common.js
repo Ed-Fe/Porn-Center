@@ -44,8 +44,15 @@ export const OPTION_LABELS = {
     all: 'Qualquer qualidade',
     hd: 'HD',
     '1080p': '1080p'
+  },
+  locales: {
+    'pt-BR': 'Português (Brasil)',
+    'en-US': 'English (US)'
   }
 };
+
+export const ALLOWED_LOCALES = Object.freeze(['pt-BR', 'en-US']);
+export const DEFAULT_LOCALE = 'pt-BR';
 
 const MAIN_NAV_ITEMS = Object.freeze([
   { href: '/', label: 'Início' },
@@ -79,6 +86,35 @@ function parseBoolean(value, fallback = false) {
   }
 
   return ['1', 'true', 'on', 'yes', 'y', 'sim'].includes(String(value).trim().toLowerCase());
+}
+
+export function normalizeLocale(value, fallback = DEFAULT_LOCALE) {
+  const normalized = String(value ?? '').trim();
+  return ALLOWED_LOCALES.includes(normalized) ? normalized : fallback;
+}
+
+export function loadLocalePreference() {
+  return normalizeLocale(loadStorage('bx_locale', DEFAULT_LOCALE), DEFAULT_LOCALE);
+}
+
+export function saveLocalePreference(value) {
+  const locale = normalizeLocale(value, DEFAULT_LOCALE);
+  saveStorage('bx_locale', locale);
+  return locale;
+}
+
+export function resolveLocalePreference(params) {
+  const storedLocale = loadLocalePreference();
+
+  if (!params) {
+    return storedLocale;
+  }
+
+  if (params instanceof URLSearchParams) {
+    return normalizeLocale(params.get('locale'), storedLocale);
+  }
+
+  return normalizeLocale(params.locale, storedLocale);
 }
 
 export function normalizeProviderPreferences(value = {}, defaults = DEFAULT_PROVIDER_PREFERENCES) {
@@ -257,6 +293,7 @@ export function renderSiteHeader(target, options = {}) {
             <label class="field"><span>Data</span><select id="dateSelect" name="date"></select></label>
             <label class="field"><span>Duração</span><select id="durationSelect" name="duration"></select></label>
             <label class="field"><span>Qualidade</span><select id="qualitySelect" name="quality"></select></label>
+            <label class="field"><span>Idioma</span><select id="localeSelect" name="locale"></select></label>
             <label class="checkbox-row header-checkbox-row"><input id="watchedCheckbox" name="watched" type="checkbox" value="h" /><span>Ocultar vistos</span></label>
             <fieldset class="field provider-fieldset">
               <legend>Provedores</legend>
@@ -289,6 +326,7 @@ export function fillSearchControls(controls, params = {}) {
   controls.dateSelect.value = params.date || 'all';
   controls.durationSelect.value = params.duration || 'allduration';
   controls.qualitySelect.value = params.quality || 'all';
+  controls.localeSelect.value = normalizeLocale(params.locale, loadLocalePreference());
   controls.watchedCheckbox.checked = params.watched === 'h';
   const preferences = normalizeProviderPreferences(params, loadProviderPreferences());
   controls.providerCheckboxes.forEach((checkbox) => {
@@ -317,6 +355,7 @@ export function readSearchControls(controls) {
     date: controls.dateSelect.value,
     duration: controls.durationSelect.value,
     quality: controls.qualitySelect.value,
+    locale: normalizeLocale(controls.localeSelect.value, loadLocalePreference()),
     watched: controls.watchedCheckbox.checked ? 'h' : '',
     providers: providerPreferences.enabledProviders.join(',')
   };
@@ -330,6 +369,8 @@ export function buildExploreHref(params = {}) {
   if (params.date && params.date !== 'all') search.set('date', params.date);
   if (params.duration && params.duration !== 'allduration') search.set('duration', params.duration);
   if (params.quality && params.quality !== 'all') search.set('quality', params.quality);
+  const locale = normalizeLocale(params.locale, loadLocalePreference());
+  if (locale !== DEFAULT_LOCALE) search.set('locale', locale);
   if (params.watched === 'h') search.set('watched', 'h');
   search.set('providers', normalizeProviderPreferences(params, loadProviderPreferences()).enabledProviders.join(','));
   if (params.page && Number(params.page) > 1) search.set('page', String(params.page));
@@ -347,6 +388,7 @@ export function buildViewHref(item = {}) {
   if (item.uploaderProfile) params.set('profile', item.uploaderProfile);
   if (item.duration) params.set('duration', item.duration);
   if (item.sourceKey) params.set('source', item.sourceKey);
+  params.set('locale', normalizeLocale(item.locale, loadLocalePreference()));
   return `/view?${params.toString()}`;
 }
 
@@ -357,6 +399,7 @@ export function buildStarHref(item = {}) {
   params.set('url', profileUrl);
   if (item.uploaderName || item.name) params.set('name', item.uploaderName || item.name);
   if (item.sourceKey) params.set('source', item.sourceKey);
+  params.set('locale', normalizeLocale(item.locale, loadLocalePreference()));
 
   return `/star?${params.toString()}`;
 }
@@ -456,23 +499,48 @@ export function persistRecentSearch(query) {
 }
 
 function isDirectPlayableFormat(format = {}) {
-  const url = String(format.url || '');
+  const url = getEffectiveMediaUrl(format.url || '');
   const label = String(format.label || '');
   return !isResolverFormat(format) && (/\.(mp4|webm|3gp)($|\?)/i.test(url) || /\b(mp4|webm|3gp)\b/i.test(label));
 }
 
 function isStreamingFormat(format = {}) {
-  const url = String(format.url || '');
+  const url = getEffectiveMediaUrl(format.url || '');
   const label = String(format.label || '');
   return /\.m3u8($|\?)/i.test(url) || /\bhls\b/i.test(label);
 }
 
 function isResolverFormat(format = {}) {
-  return /\/video\/get_media(?:$|\?)/i.test(String(format.url || ''));
+  return /\/video\/get_media(?:$|\?)/i.test(getEffectiveMediaUrl(format.url || ''));
+}
+
+function getEffectiveMediaUrl(url = '') {
+  const rawUrl = String(url || '').trim();
+
+  if (!rawUrl) {
+    return '';
+  }
+
+  try {
+    const parsed = new URL(rawUrl, window.location.origin);
+
+    if (/^\/api\/media-proxy$/i.test(parsed.pathname)) {
+      const originalUrl = parsed.searchParams.get('url');
+      return originalUrl ? String(originalUrl) : rawUrl;
+    }
+  } catch {
+    return rawUrl;
+  }
+
+  return rawUrl;
+}
+
+function isPlayableMediaUrl(url = '') {
+  return /^https?:/i.test(url) || /^\/api\/media-proxy\?/i.test(url);
 }
 
 export function pickPreferredFormat(formats = []) {
-  const playableFormats = formats.filter((format) => typeof format?.url === 'string' && /^https?:/i.test(format.url));
+  const playableFormats = formats.filter((format) => typeof format?.url === 'string' && isPlayableMediaUrl(format.url));
   const priority = ['HD Quality', 'Default Quality', 'Low Quality', 'HLS Quality', 'Qualidade padrão'];
   const scoredFormats = playableFormats
     .map((format) => {
@@ -508,10 +576,12 @@ export function pickPreferredFormat(formats = []) {
 }
 
 export function getMimeTypeForUrl(url) {
-  if (/\.m3u8($|\?)/i.test(url)) return 'application/x-mpegURL';
-  if (/\.mp4($|\?)/i.test(url)) return 'video/mp4';
-  if (/\.webm($|\?)/i.test(url)) return 'video/webm';
-  if (/\.3gp($|\?)/i.test(url)) return 'video/3gpp';
+  const mediaUrl = getEffectiveMediaUrl(url);
+
+  if (/\.m3u8($|\?)/i.test(mediaUrl)) return 'application/x-mpegURL';
+  if (/\.mp4($|\?)/i.test(mediaUrl)) return 'video/mp4';
+  if (/\.webm($|\?)/i.test(mediaUrl)) return 'video/webm';
+  if (/\.3gp($|\?)/i.test(mediaUrl)) return 'video/3gpp';
   return 'video/mp4';
 }
 
@@ -533,6 +603,7 @@ export async function setupHeaderSearch(controls) {
   hydrateSelect(controls.dateSelect, meta.dates, OPTION_LABELS.dates);
   hydrateSelect(controls.durationSelect, meta.durations, OPTION_LABELS.durations);
   hydrateSelect(controls.qualitySelect, meta.qualities, OPTION_LABELS.qualities);
+  hydrateSelect(controls.localeSelect, meta.locales || ALLOWED_LOCALES, OPTION_LABELS.locales);
   return meta;
 }
 
@@ -543,6 +614,7 @@ export function createSearchControls(root = document) {
     dateSelect: root.querySelector('#dateSelect'),
     durationSelect: root.querySelector('#durationSelect'),
     qualitySelect: root.querySelector('#qualitySelect'),
+    localeSelect: root.querySelector('#localeSelect'),
     watchedCheckbox: root.querySelector('#watchedCheckbox'),
     xvideosCheckbox: root.querySelector('#xvideosCheckbox'),
     pornhubCheckbox: root.querySelector('#pornhubCheckbox'),

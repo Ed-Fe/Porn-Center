@@ -34,7 +34,8 @@ const {
   parseCreatorUploadsFromHtml,
   extractStructuredVideoData: extractPornhubStructuredVideoData,
   extractCreatorProfileDataFromHtml: extractPornhubCreatorProfileDataFromHtml,
-  extractMediaDefinitionsFromHtml
+  extractMediaDefinitionsFromHtml,
+  resolveMediaDefinitions
 } = require('../src/lib/pornhub-client');
 const {
   buildSearchUrl: buildMallandrinhasSearchUrl,
@@ -86,6 +87,7 @@ test('normalizeSearchParams sanitiza valores e remove filtros padrão', () => {
     search: 'sample',
     sort: 'rating',
     pagination: 4,
+    locale: 'pt-BR',
     proxy: false,
     filterDate: 'week',
     filterDuration: '3-10min',
@@ -357,13 +359,13 @@ test('parseProfileVideosPayload lê uploads JSON do perfil XVideos', () => {
 });
 
 test('buildPornhubSearchUrl monta query compatível com busca do Pornhub', () => {
-  assert.equal(buildPornhubSearchUrl({ search: 'cosplay', pagination: 1 }), 'https://www.pornhub.com/video/search?search=cosplay');
-  assert.equal(buildPornhubSearchUrl({ search: 'cosplay', pagination: 3 }), 'https://www.pornhub.com/video/search?search=cosplay&page=3');
+  assert.equal(buildPornhubSearchUrl({ search: 'cosplay', pagination: 1 }), 'https://pt.pornhub.com/video/search?search=cosplay');
+  assert.equal(buildPornhubSearchUrl({ search: 'cosplay', pagination: 3 }), 'https://pt.pornhub.com/video/search?search=cosplay&page=3');
 });
 
 test('buildPornhubFeedUrl monta a url do feed com paginação', () => {
-  assert.equal(buildPornhubFeedUrl({ page: 1 }), 'https://www.pornhub.com/video');
-  assert.equal(buildPornhubFeedUrl({ page: 4 }), 'https://www.pornhub.com/video?page=4');
+  assert.equal(buildPornhubFeedUrl({ page: 1 }), 'https://pt.pornhub.com/video');
+  assert.equal(buildPornhubFeedUrl({ page: 4 }), 'https://pt.pornhub.com/video?page=4');
 });
 
 test('buildMallandrinhasSearchUrl monta a busca com paginação WordPress', () => {
@@ -399,7 +401,7 @@ test('parsePornhubSearchResultsFromHtml encontra cards do catálogo', () => {
   const items = parsePornhubSearchResultsFromHtml(html);
 
   assert.equal(items.length, 1);
-  assert.equal(items[0].video, 'https://www.pornhub.com/view_video.php?viewkey=abc123');
+  assert.equal(items[0].video, 'https://pt.pornhub.com/view_video.php?viewkey=abc123');
   assert.equal(items[0].title, 'Demo Pornhub');
   assert.equal(items[0].uploaderName, 'Modelo Demo');
 });
@@ -430,7 +432,7 @@ test('parseCreatorUploadsFromHtml filtra uploads corretos do Pornhub', () => {
   });
 
   assert.equal(items.length, 1);
-  assert.equal(items[0].video, 'https://www.pornhub.com/view_video.php?viewkey=abc123');
+  assert.equal(items[0].video, 'https://pt.pornhub.com/view_video.php?viewkey=abc123');
   assert.equal(items[0].uploaderName, 'Demo Star');
 });
 
@@ -526,6 +528,74 @@ test('extractMediaDefinitionsFromHtml reconhece fontes do Pornhub', () => {
   ]);
 });
 
+test('extractMediaDefinitionsFromHtml inclui get_media quando solicitado', () => {
+  const html = `
+    <script>
+      var flashvars_1 = {
+        "mediaDefinitions": [
+          {"format":"mp4","videoUrl":"https://www.pornhub.com/video/get_media?s=abc&v=demo"}
+        ]
+      };
+    </script>
+  `;
+
+  const formats = extractMediaDefinitionsFromHtml(html, { includeRemote: true });
+
+  assert.deepEqual(formats, [
+    {
+      label: 'MP4',
+      url: 'https://www.pornhub.com/video/get_media?s=abc&v=demo',
+      remote: true
+    }
+  ]);
+});
+
+test('resolveMediaDefinitions converte get_media em mp4 direto', async () => {
+  const formats = await resolveMediaDefinitions([
+    { label: '1080p HLS', url: 'https://cdn.example/master.m3u8', remote: false },
+    { label: 'MP4', url: 'https://www.pornhub.com/video/get_media?s=abc&v=demo', remote: true }
+  ], {
+    referer: 'https://www.pornhub.com/view_video.php?viewkey=demo',
+    requestJsonImpl: async (url, options) => {
+      assert.equal(url, 'https://www.pornhub.com/video/get_media?s=abc&v=demo');
+      assert.equal(options.headers.Referer, 'https://www.pornhub.com/view_video.php?viewkey=demo');
+
+      return [
+        { format: 'mp4', quality: '240', videoUrl: 'https://cdn.example/240.mp4' },
+        { format: 'mp4', quality: '720', videoUrl: 'https://cdn.example/720.mp4' }
+      ];
+    }
+  });
+
+  assert.deepEqual(formats, [
+    { label: '1080p HLS', url: 'https://cdn.example/master.m3u8' },
+    { label: '240p', url: 'https://cdn.example/240.mp4' },
+    { label: '720p', url: 'https://cdn.example/720.mp4' }
+  ]);
+});
+
+test('normalizeVideoData preserva urls assinadas do Pornhub para renovação do player', () => {
+  const video = normalizeVideoData({
+    name: 'Pornhub assinado',
+    contentUrl: [
+      {
+        label: '720p',
+        url: 'https://ev.phncdn.com/videos/demo.mp4?validto=1999999999&hash=abc'
+      }
+    ]
+  }, {
+    sourceKey: 'pornhub',
+    sourceName: 'Pornhub'
+  });
+
+  assert.deepEqual(video.formats, [
+    {
+      label: '720p',
+      url: 'https://ev.phncdn.com/videos/demo.mp4?validto=1999999999&hash=abc'
+    }
+  ]);
+});
+
 test('pickPreferredFormat prioriza arquivo direto sobre HLS quando ambos existem', async () => {
   const { pickPreferredFormat } = await import(pathToFileURL(path.join(__dirname, '..', 'public', 'common.js')).href);
 
@@ -546,6 +616,34 @@ test('pickPreferredFormat prioriza HLS sobre get_media indireto do Pornhub', asy
   ]);
 
   assert.equal(format.label, '1080p HLS');
+});
+
+test('pickPreferredFormat e getMimeTypeForUrl aceitam url proxiada de mídia', async () => {
+  const { pickPreferredFormat, getMimeTypeForUrl } = await import(pathToFileURL(path.join(__dirname, '..', 'public', 'common.js')).href);
+
+  const previousWindow = global.window;
+  global.window = {
+    location: {
+      origin: 'http://localhost:3001'
+    }
+  };
+
+  const proxyHls = '/api/media-proxy?url=https%3A%2F%2Fev-h.phncdn.com%2Fhls%2Fvideos%2Fdemo%2Fmaster.m3u8%3Ftoken%3Dabc&source=https%3A%2F%2Fwww.pornhub.com%2Fview_video.php%3Fviewkey%3Ddemo';
+  const proxyMp4 = '/api/media-proxy?url=https%3A%2F%2Fev.phncdn.com%2Fvideos%2Fdemo%2F720.mp4%3Ftoken%3Dabc&source=https%3A%2F%2Fwww.pornhub.com%2Fview_video.php%3Fviewkey%3Ddemo';
+
+  const picked = pickPreferredFormat([
+    { label: '1080p HLS', url: proxyHls },
+    { label: '720p', url: proxyMp4 }
+  ]);
+
+  assert.equal(picked.label, '720p');
+  assert.equal(getMimeTypeForUrl(proxyHls), 'application/x-mpegURL');
+
+  if (previousWindow === undefined) {
+    delete global.window;
+  } else {
+    global.window = previousWindow;
+  }
 });
 
 test('isRetryableRequestError reconhece falhas temporárias', () => {

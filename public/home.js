@@ -4,6 +4,7 @@ import {
   fetchJson,
   fillSearchControls,
   getSourceLabel,
+  loadLocalePreference,
   loadProviderPreferences,
   loadStorage,
   readProviderPreferencesFromControls,
@@ -12,6 +13,7 @@ import {
   renderRecentSearches,
   renderVideoCards,
   saveProviderPreferences,
+  saveLocalePreference,
   setStatus,
   setupHeaderSearch
 } from './common.js';
@@ -38,6 +40,7 @@ const elements = {
 
 const state = {
   page: 1,
+  locale: loadLocalePreference(),
   providerPreferences: loadProviderPreferences()
 };
 
@@ -48,7 +51,7 @@ bootstrap().catch((error) => {
 async function bootstrap() {
   await setupHeaderSearch(controls);
   bindHeaderSearch(elements.searchForm, controls);
-  fillSearchControls(controls, state.providerPreferences);
+  fillSearchControls(controls, { ...state.providerPreferences, locale: state.locale });
   renderRecentSearches(elements.recentSearches, loadStorage('bx_recent_searches', []));
   renderQuickCategories(elements.quickCategories);
   elements.clearFiltersButton.addEventListener('click', () => fillSearchControls(controls, state.providerPreferences));
@@ -60,10 +63,17 @@ async function bootstrap() {
   controls.providerCheckboxes.forEach((checkbox) => {
     checkbox.addEventListener('change', async () => {
       state.providerPreferences = saveProviderPreferences(readProviderPreferencesFromControls(controls));
+      state.locale = saveLocalePreference(controls.localeSelect.value);
       fillSearchControls(controls, state.providerPreferences);
       state.page = 1;
       await loadFeed();
     });
+  });
+  controls.localeSelect.addEventListener('change', async () => {
+    state.locale = saveLocalePreference(controls.localeSelect.value);
+    fillSearchControls(controls, { ...state.providerPreferences, locale: state.locale });
+    state.page = 1;
+    await loadFeed();
   });
   elements.prevPageButton.addEventListener('click', () => changePage(-1));
   elements.nextPageButton.addEventListener('click', () => changePage(1));
@@ -74,6 +84,7 @@ async function loadFeed() {
   setStatus(elements.statusMessage, 'Carregando feed inicial...');
   const search = new URLSearchParams({ page: String(state.page) });
   search.set('providers', state.providerPreferences.enabledProviders.join(','));
+  search.set('locale', state.locale);
   const data = await fetchJson(`/api/feed?${search.toString()}`);
   renderVideoCards(elements.resultsList, data.items, 'Nenhum vídeo disponível no feed inicial.');
   const loadedProviders = (data.providers || []).map((providerKey) => getSourceLabel(providerKey)).join(' + ');

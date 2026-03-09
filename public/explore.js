@@ -5,6 +5,7 @@ import {
   fetchJson,
   fillSearchControls,
   getSourceLabel,
+  resolveLocalePreference,
   loadProviderPreferences,
   persistRecentSearch,
   readProviderPreferencesFromControls,
@@ -13,6 +14,7 @@ import {
   renderVideoCards,
   resolveProviderPreferences,
   saveProviderPreferences,
+  saveLocalePreference,
   setStatus,
   setupHeaderSearch
 } from './common.js';
@@ -43,6 +45,7 @@ const state = {
   date: params.get('date') || 'all',
   duration: params.get('duration') || 'allduration',
   quality: params.get('quality') || 'all',
+  locale: resolveLocalePreference(params),
   watched: params.get('watched') || '',
   providerPreferences: resolveProviderPreferences(params)
 };
@@ -52,22 +55,32 @@ bootstrap().catch((error) => {
 });
 
 async function bootstrap() {
+  state.locale = saveLocalePreference(state.locale);
   await setupHeaderSearch(controls);
   bindHeaderSearch(elements.searchForm, controls);
   fillSearchControls(controls, { ...state, ...state.providerPreferences });
   renderQuickCategories(elements.quickCategories);
   elements.clearFiltersButton.addEventListener('click', () => {
-    fillSearchControls(controls, { q: state.q, ...state.providerPreferences });
+    fillSearchControls(controls, { q: state.q, locale: state.locale, ...state.providerPreferences });
   });
   controls.providerCheckboxes.forEach((checkbox) => {
     checkbox.addEventListener('change', () => {
       state.providerPreferences = saveProviderPreferences(readProviderPreferencesFromControls(controls));
+      state.locale = saveLocalePreference(controls.localeSelect.value);
       fillSearchControls(controls, { ...state, ...state.providerPreferences });
       state.page = 1;
       if (state.q) {
         window.location.href = buildExploreHref({ ...state, ...state.providerPreferences });
       }
     });
+  });
+  controls.localeSelect.addEventListener('change', () => {
+    state.locale = saveLocalePreference(controls.localeSelect.value);
+    fillSearchControls(controls, { ...state, ...state.providerPreferences });
+    state.page = 1;
+    if (state.q) {
+      window.location.href = buildExploreHref({ ...state, ...state.providerPreferences });
+    }
   });
   elements.prevPageButton.addEventListener('click', () => navigatePage(-1));
   elements.nextPageButton.addEventListener('click', () => navigatePage(1));
@@ -89,6 +102,7 @@ async function loadResults() {
     date: state.date,
     duration: state.duration,
     quality: state.quality,
+    locale: state.locale,
     page: String(state.page),
     providers: state.providerPreferences.enabledProviders.join(',')
   });

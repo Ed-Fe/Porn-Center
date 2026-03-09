@@ -4,10 +4,12 @@ import {
   escapeHtml,
   fetchJson,
   fillSearchControls,
+  resolveLocalePreference,
   loadProviderPreferences,
   readProviderPreferencesFromControls,
   renderSiteHeader,
   renderVideoCards,
+  saveLocalePreference,
   saveProviderPreferences,
   setStatus,
   setupHeaderSearch
@@ -22,6 +24,7 @@ const controls = createSearchControls();
 const params = new URLSearchParams(window.location.search);
 const profileUrl = params.get('url') || '';
 const fallbackName = params.get('name') || '';
+let activeLocale = resolveLocalePreference(params);
 
 const elements = {
   searchForm: document.querySelector('#searchForm'),
@@ -37,15 +40,21 @@ bootstrap().catch((error) => {
 });
 
 async function bootstrap() {
+  activeLocale = saveLocalePreference(activeLocale);
   await setupHeaderSearch(controls);
   bindHeaderSearch(elements.searchForm, controls);
-  fillSearchControls(controls, loadProviderPreferences());
+  fillSearchControls(controls, { ...loadProviderPreferences(), locale: activeLocale });
   elements.clearFiltersButton.addEventListener('click', () => fillSearchControls(controls, loadProviderPreferences()));
   controls.providerCheckboxes.forEach((checkbox) => {
     checkbox.addEventListener('change', () => {
       const preferences = saveProviderPreferences(readProviderPreferencesFromControls(controls));
       fillSearchControls(controls, preferences);
     });
+  });
+  controls.localeSelect.addEventListener('change', () => {
+    const selectedLocale = saveLocalePreference(controls.localeSelect.value);
+    activeLocale = selectedLocale;
+    fillSearchControls(controls, { ...loadProviderPreferences(), locale: selectedLocale });
   });
 
   if (!profileUrl) {
@@ -60,7 +69,7 @@ async function bootstrap() {
 
 async function loadPerformer() {
   setStatus(elements.statusMessage, 'Carregando detalhes da estrela...');
-  const response = await fetchJson(`/api/star?url=${encodeURIComponent(profileUrl)}`);
+  const response = await fetchJson(`/api/star?url=${encodeURIComponent(profileUrl)}&locale=${encodeURIComponent(activeLocale)}`);
   const performer = response.performer;
   const name = performer.name || fallbackName || 'Estrela sem nome';
   const statsMarkup = performer.stats?.length

@@ -7,10 +7,24 @@ const BASE_URL = 'https://www.xvideos.com';
 const RESPONSE_CACHE = new Map();
 const REQUEST_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
-  'Accept-Language': 'en-US,en;q=0.9,pt-BR;q=0.8',
+  'Accept-Language': 'pt-BR,pt;q=0.95,en-US;q=0.8,en;q=0.7',
   'Referer': BASE_URL,
-  'Cookie': 'age_verified=1; platform=pc'
+  'Cookie': 'age_verified=1; platform=pc; country=BR; language=pt'
 };
+
+function buildLocaleHeaders(options = {}) {
+  if (String(options.locale || '').trim() === 'en-US') {
+    return {
+      'Accept-Language': 'en-US,en;q=0.95,pt-BR;q=0.7,pt;q=0.6',
+      'Cookie': 'age_verified=1; platform=pc; country=US; language=en'
+    };
+  }
+
+  return {
+    'Accept-Language': REQUEST_HEADERS['Accept-Language'],
+    'Cookie': REQUEST_HEADERS.Cookie
+  };
+}
 
 function absoluteUrl(value = '') {
   if (!value) {
@@ -330,7 +344,8 @@ function fallbackVideoMetadata(html) {
   };
 }
 
-async function requestHtml(url) {
+async function requestHtml(url, options = {}) {
+  const localeHeaders = buildLocaleHeaders(options);
   return requestWithCache({
     cache: RESPONSE_CACHE,
     key: `GET:${url}`,
@@ -340,7 +355,11 @@ async function requestHtml(url) {
     retryDelayMs: 900,
     execute: async () => {
       const response = await axios.get(url, {
-        headers: REQUEST_HEADERS,
+        headers: {
+          ...REQUEST_HEADERS,
+          ...localeHeaders,
+          ...(options.headers && typeof options.headers === 'object' ? options.headers : {})
+        },
         timeout: 30000
       });
 
@@ -349,7 +368,8 @@ async function requestHtml(url) {
   });
 }
 
-async function requestJson(url) {
+async function requestJson(url, options = {}) {
+  const localeHeaders = buildLocaleHeaders(options);
   return requestWithCache({
     cache: RESPONSE_CACHE,
     key: `POST:${url}`,
@@ -359,7 +379,11 @@ async function requestJson(url) {
     retryDelayMs: 900,
     execute: async () => {
       const response = await axios.post(url, null, {
-        headers: REQUEST_HEADERS,
+        headers: {
+          ...REQUEST_HEADERS,
+          ...localeHeaders,
+          ...(options.headers && typeof options.headers === 'object' ? options.headers : {})
+        },
         timeout: 30000
       });
 
@@ -368,18 +392,18 @@ async function requestJson(url) {
   });
 }
 
-async function searchVideosDirect(params) {
-  const html = await requestHtml(buildSearchUrl(params));
+async function searchVideosDirect(params, options = {}) {
+  const html = await requestHtml(buildSearchUrl(params), options);
   return parseSearchResultsFromHtml(html);
 }
 
-async function getFeedVideosDirect(params = {}) {
-  const html = await requestHtml(buildFeedUrl(params));
+async function getFeedVideosDirect(params = {}, options = {}) {
+  const html = await requestHtml(buildFeedUrl(params), options);
   return parseSearchResultsFromHtml(html);
 }
 
-async function getVideoDataDirect(videoUrl) {
-  const html = await requestHtml(videoUrl);
+async function getVideoDataDirect(videoUrl, options = {}) {
+  const html = await requestHtml(videoUrl, options);
   const structured = extractStructuredVideoData(html) || fallbackVideoMetadata(html);
   const formats = extractFormatsFromHtml(html);
 
@@ -389,13 +413,13 @@ async function getVideoDataDirect(videoUrl) {
   };
 }
 
-async function getCreatorDataDirect(profileUrl) {
-  const html = await requestHtml(profileUrl);
+async function getCreatorDataDirect(profileUrl, options = {}) {
+  const html = await requestHtml(profileUrl, options);
   const creator = extractCreatorProfileDataFromHtml(html, profileUrl);
   let items = [];
 
   try {
-    const payload = await requestJson(buildCreatorVideosApiUrl(profileUrl));
+    const payload = await requestJson(buildCreatorVideosApiUrl(profileUrl), options);
     items = parseProfileVideosPayload(payload, creator);
   } catch {
     items = parseProfileVideosFromHtml(html, creator);

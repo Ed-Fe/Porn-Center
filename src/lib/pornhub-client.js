@@ -3,22 +3,23 @@ const cheerio = require('cheerio');
 const { decodeHTML } = require('entities');
 const { requestWithCache } = require('./request-cache');
 
-const BASE_URL = 'https://www.pornhub.com';
+const BASE_URL = 'https://pt.pornhub.com';
+const BASE_URL_EN = 'https://www.pornhub.com';
 const RESPONSE_CACHE = new Map();
 const REQUEST_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
-  'Accept-Language': 'en-US,en;q=0.9,pt-BR;q=0.8',
-  'Cookie': 'age_verified=1; platform=pc',
+  'Accept-Language': 'pt-BR,pt;q=0.95,en-US;q=0.8,en;q=0.7',
+  'Cookie': 'age_verified=1; platform=pc; country=BR; language=pt_BR',
   'Referer': BASE_URL
 };
 
-function absoluteUrl(value = '') {
+function absoluteUrl(value = '', baseUrl = BASE_URL) {
   if (!value) {
     return '';
   }
 
   try {
-    return new URL(value, BASE_URL).toString();
+    return new URL(value, baseUrl).toString();
   } catch {
     return '';
   }
@@ -28,8 +29,35 @@ function cleanText(value = '') {
   return decodeHTML(String(value)).replace(/\s+/g, ' ').trim();
 }
 
-function buildSearchUrl(params = {}) {
-  const url = new URL('/video/search', BASE_URL);
+function resolveLocaleContext(options = {}) {
+  const locale = String(options.locale || '').trim() === 'en-US' ? 'en-US' : 'pt-BR';
+  const baseUrl = locale === 'en-US' ? BASE_URL_EN : BASE_URL;
+
+  if (locale === 'en-US') {
+    return {
+      locale,
+      baseUrl,
+      headers: {
+        'Accept-Language': 'en-US,en;q=0.95,pt-BR;q=0.7,pt;q=0.6',
+        'Cookie': 'age_verified=1; platform=pc; country=US; language=en_US',
+        'Referer': baseUrl
+      }
+    };
+  }
+
+  return {
+    locale,
+    baseUrl,
+    headers: {
+      'Accept-Language': REQUEST_HEADERS['Accept-Language'],
+      'Cookie': REQUEST_HEADERS.Cookie,
+      'Referer': baseUrl
+    }
+  };
+}
+
+function buildSearchUrl(params = {}, baseUrl = BASE_URL) {
+  const url = new URL('/video/search', baseUrl);
   const page = Math.max(Number(params.pagination ?? params.page ?? 1), 1);
 
   url.searchParams.set('search', String(params.search ?? '').trim());
@@ -41,8 +69,8 @@ function buildSearchUrl(params = {}) {
   return url.toString();
 }
 
-function buildFeedUrl(params = {}) {
-  const url = new URL('/video', BASE_URL);
+function buildFeedUrl(params = {}, baseUrl = BASE_URL) {
+  const url = new URL('/video', baseUrl);
   const page = Math.max(Number(params.page ?? 1), 1);
 
   if (page > 1) {
@@ -52,7 +80,7 @@ function buildFeedUrl(params = {}) {
   return url.toString();
 }
 
-function parseSearchResultsFromHtml(html) {
+function parseSearchResultsFromHtml(html, baseUrl = BASE_URL) {
   const $ = cheerio.load(html);
   const seen = new Set();
 
@@ -60,7 +88,7 @@ function parseSearchResultsFromHtml(html) {
     .map((index, element) => {
       const card = $(element);
       const linkElement = card.find('a[href*="/view_video.php?"]').first();
-      const video = absoluteUrl(linkElement.attr('href'));
+      const video = absoluteUrl(linkElement.attr('href'), baseUrl);
 
       if (!video || seen.has(video)) {
         return null;
@@ -80,11 +108,11 @@ function parseSearchResultsFromHtml(html) {
 
       return {
         video,
-        thumbnail: absoluteUrl(image.attr('data-mediumthumb') || image.attr('data-path') || image.attr('src') || ''),
+        thumbnail: absoluteUrl(image.attr('data-mediumthumb') || image.attr('data-path') || image.attr('src') || '', baseUrl),
         title,
         duration: cleanText(card.find('.duration').first().text()),
         uploaderName: cleanText(uploaderAnchor.text()),
-        uploaderProfile: absoluteUrl(uploaderAnchor.attr('href')),
+        uploaderProfile: absoluteUrl(uploaderAnchor.attr('href'), baseUrl),
         index,
         sourceKey: 'pornhub',
         sourceName: 'Pornhub'
@@ -94,16 +122,16 @@ function parseSearchResultsFromHtml(html) {
     .filter(Boolean);
 }
 
-function parseCreatorUploadsFromHtml(html, creator = {}) {
+function parseCreatorUploadsFromHtml(html, creator = {}, baseUrl = BASE_URL) {
   const $ = cheerio.load(html);
-  const expectedProfile = buildCreatorBaseUrl(creator.profileUrl || creator.uploadsUrl || '');
+  const expectedIdentity = buildCreatorIdentity(creator.profileUrl || creator.uploadsUrl || '');
   const seen = new Set();
 
   return $('.videoUList li.pcVideoListItem, .videoUList li.videoBox, .videoUList li')
     .map((index, element) => {
       const card = $(element);
       const linkElement = card.find('a[href*="/view_video.php?"]').first();
-      const video = absoluteUrl(linkElement.attr('href'));
+      const video = absoluteUrl(linkElement.attr('href'), baseUrl);
 
       if (!video || seen.has(video)) {
         return null;
@@ -111,9 +139,9 @@ function parseCreatorUploadsFromHtml(html, creator = {}) {
 
       const image = card.find('img').first();
       const uploaderAnchor = card.find('.usernameWrap a[href], .videoUploaderBlock a[href], .usernameBadgesWrapper a[href]').first();
-      const uploaderProfile = absoluteUrl(uploaderAnchor.attr('href'));
+      const uploaderProfile = absoluteUrl(uploaderAnchor.attr('href'), baseUrl);
 
-      if (expectedProfile && uploaderProfile && buildCreatorBaseUrl(uploaderProfile) !== expectedProfile) {
+      if (expectedIdentity && uploaderProfile && buildCreatorIdentity(uploaderProfile) !== expectedIdentity) {
         return null;
       }
 
@@ -129,7 +157,7 @@ function parseCreatorUploadsFromHtml(html, creator = {}) {
 
       return {
         video,
-        thumbnail: absoluteUrl(image.attr('data-mediumthumb') || image.attr('data-path') || image.attr('src') || ''),
+        thumbnail: absoluteUrl(image.attr('data-mediumthumb') || image.attr('data-path') || image.attr('src') || '', baseUrl),
         title,
         duration: cleanText(card.find('.duration').first().text()),
         uploaderName: cleanText(uploaderAnchor.text()) || creator.name || '',
@@ -143,8 +171,23 @@ function parseCreatorUploadsFromHtml(html, creator = {}) {
     .filter(Boolean);
 }
 
-function buildCreatorBaseUrl(profileUrl) {
-  const parsed = new URL(profileUrl);
+function buildCreatorIdentity(profileUrl) {
+  try {
+    const parsed = new URL(profileUrl);
+    const segments = parsed.pathname
+      .split('/')
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((entry) => entry.toLowerCase());
+
+    return segments.length === 2 ? `/${segments[0]}/${segments[1]}` : '';
+  } catch {
+    return '';
+  }
+}
+
+function buildCreatorBaseUrl(profileUrl, baseUrl = BASE_URL) {
+  const parsed = new URL(profileUrl, baseUrl);
   const segments = parsed.pathname.split('/').filter(Boolean);
 
   if (segments.length >= 2) {
@@ -156,11 +199,11 @@ function buildCreatorBaseUrl(profileUrl) {
   return parsed.toString();
 }
 
-function buildCreatorUploadsUrl(profileUrl) {
-  return `${buildCreatorBaseUrl(profileUrl).replace(/\/$/, '')}/videos/upload`;
+function buildCreatorUploadsUrl(profileUrl, baseUrl = BASE_URL) {
+  return `${buildCreatorBaseUrl(profileUrl, baseUrl).replace(/\/$/, '')}/videos/upload`;
 }
 
-function extractCreatorProfileDataFromHtml(html, profileUrl) {
+function extractCreatorProfileDataFromHtml(html, profileUrl, baseUrl = BASE_URL) {
   const $ = cheerio.load(html);
   const pageText = cleanText($('body').text());
   const heading = cleanText($('h1').first().text() || $('meta[property="og:title"]').attr('content') || $('title').text());
@@ -169,7 +212,8 @@ function extractCreatorProfileDataFromHtml(html, profileUrl) {
   const avatar = absoluteUrl(
     $('.profileUserPic img, .userImage img, .avatar img, img[alt]').first().attr('src') ||
       $('meta[property="og:image"]').attr('content') ||
-      ''
+      '',
+    baseUrl
   );
 
   const fields = [
@@ -186,8 +230,8 @@ function extractCreatorProfileDataFromHtml(html, profileUrl) {
     headline: cleanText(pageText.match(/([0-9.,kKmMbB]+\s+Subscribers)/i)?.[1] || ''),
     description: bio || cleanText($('meta[property="og:description"]').attr('content') || 'Sem descrição pública disponível.'),
     avatar,
-    profileUrl: buildCreatorBaseUrl(profileUrl),
-    uploadsUrl: buildCreatorUploadsUrl(profileUrl),
+    profileUrl: buildCreatorBaseUrl(profileUrl, baseUrl),
+    uploadsUrl: buildCreatorUploadsUrl(profileUrl, baseUrl),
     stats: fields
       .map(([label, pattern]) => ({ label, value: cleanText(pageText.match(pattern)?.[1] || '') }))
       .filter((entry) => entry.value),
@@ -338,8 +382,20 @@ function isIndirectMediaResolverUrl(url = '') {
   return /\/video\/get_media(?:$|\?)/i.test(String(url));
 }
 
-function extractMediaDefinitionsFromHtml(html) {
+function normalizeMediaDefinition(item = {}, baseUrl = BASE_URL) {
+  const url = absoluteUrl(item.videoUrl || item.remote || '', baseUrl);
+
+  return {
+    label: formatMediaDefinitionLabel(item),
+    url,
+    remote: isIndirectMediaResolverUrl(url) || Boolean(item.remote)
+  };
+}
+
+function extractMediaDefinitionsFromHtml(html, options = {}) {
   const rawArray = extractBalancedArrayAfterKey(html, 'mediaDefinitions');
+  const includeRemote = options.includeRemote === true;
+  const baseUrl = String(options.baseUrl || BASE_URL);
 
   if (!rawArray) {
     return [];
@@ -351,17 +407,15 @@ function extractMediaDefinitionsFromHtml(html) {
 
     return parsed
       .filter((item) => item && typeof item === 'object')
-      .map((item) => ({
-        label: formatMediaDefinitionLabel(item),
-        url: absoluteUrl(item.videoUrl || item.remote || '')
-      }))
-      .filter((item) => item.url && !isIndirectMediaResolverUrl(item.url) && !seen.has(item.url) && seen.add(item.url));
+      .map((item) => normalizeMediaDefinition(item, baseUrl))
+      .filter((item) => item.url && (includeRemote || !item.remote) && !seen.has(item.url) && seen.add(item.url))
+      .map((item) => (includeRemote ? item : { label: item.label, url: item.url }));
   } catch {
     return [];
   }
 }
 
-function fallbackVideoMetadata(html) {
+function fallbackVideoMetadata(html, baseUrl = BASE_URL) {
   const $ = cheerio.load(html);
 
   return {
@@ -369,24 +423,29 @@ function fallbackVideoMetadata(html) {
     description: cleanText(
       $('meta[property="og:description"]').attr('content') || $('meta[name="description"]').attr('content') || ''
     ),
-    thumbnailUrl: [absoluteUrl($('meta[property="og:image"]').attr('content') || '')].filter(Boolean),
+    thumbnailUrl: [absoluteUrl($('meta[property="og:image"]').attr('content') || '', baseUrl)].filter(Boolean),
     uploadDate: cleanText($('meta[itemprop="uploadDate"]').attr('content') || ''),
     interactionStatistic: undefined
   };
 }
 
-async function requestHtml(url) {
+async function requestHtml(url, options = {}) {
+
   return requestWithCache({
     cache: RESPONSE_CACHE,
-    key: `GET:${url}`,
-    ttlMs: 30_000,
-    staleTtlMs: 300_000,
-    retries: 2,
-    retryDelayMs: 900,
+    key: String(options.cacheKey || `GET:${url}`),
+    ttlMs: Number.isFinite(options.ttlMs) ? options.ttlMs : 30_000,
+    staleTtlMs: Number.isFinite(options.staleTtlMs) ? options.staleTtlMs : 300_000,
+    retries: Number.isFinite(options.retries) ? options.retries : 2,
+    retryDelayMs: Number.isFinite(options.retryDelayMs) ? options.retryDelayMs : 900,
     execute: async () => {
       const response = await axios.get(url, {
-        headers: REQUEST_HEADERS,
-        timeout: 30000
+        headers: {
+          ...REQUEST_HEADERS,
+          ...(options.headers && typeof options.headers === 'object' ? options.headers : {})
+        },
+        timeout: Number.isFinite(options.timeout) ? options.timeout : 30000,
+        maxRedirects: Number.isFinite(options.maxRedirects) ? options.maxRedirects : 5
       });
 
       return response.data;
@@ -394,20 +453,137 @@ async function requestHtml(url) {
   });
 }
 
-async function searchVideosDirect(params) {
-  const html = await requestHtml(buildSearchUrl(params));
-  return parseSearchResultsFromHtml(html);
+async function requestJson(url, options = {}) {
+  return requestWithCache({
+    cache: RESPONSE_CACHE,
+    key: String(options.cacheKey || `JSON:${url}`),
+    ttlMs: Number.isFinite(options.ttlMs) ? options.ttlMs : 15_000,
+    staleTtlMs: Number.isFinite(options.staleTtlMs) ? options.staleTtlMs : 0,
+    retries: Number.isFinite(options.retries) ? options.retries : 1,
+    retryDelayMs: Number.isFinite(options.retryDelayMs) ? options.retryDelayMs : 500,
+    execute: async () => {
+      const response = await axios.get(url, {
+        headers: {
+          ...REQUEST_HEADERS,
+          ...(options.headers && typeof options.headers === 'object' ? options.headers : {})
+        },
+        timeout: Number.isFinite(options.timeout) ? options.timeout : 30000,
+        maxRedirects: Number.isFinite(options.maxRedirects) ? options.maxRedirects : 5,
+        responseType: 'text'
+      });
+
+      if (typeof response.data === 'string') {
+        return JSON.parse(response.data);
+      }
+
+      return response.data;
+    }
+  });
 }
 
-async function getFeedVideosDirect(params = {}) {
-  const html = await requestHtml(buildFeedUrl(params));
-  return parseSearchResultsFromHtml(html);
+async function resolveMediaDefinitions(formats = [], options = {}) {
+  const requestJsonImpl = typeof options.requestJsonImpl === 'function' ? options.requestJsonImpl : requestJson;
+  const referer = String(options.referer || BASE_URL);
+  const directFormats = [];
+  const remoteFormats = [];
+
+  for (const format of Array.isArray(formats) ? formats : []) {
+    if (!format?.url) {
+      continue;
+    }
+
+    if (format.remote || isIndirectMediaResolverUrl(format.url)) {
+      remoteFormats.push(format);
+    } else {
+      directFormats.push({
+        label: String(format.label || 'Qualidade padrão'),
+        url: String(format.url)
+      });
+    }
+  }
+
+  const resolvedRemoteFormats = [];
+
+  for (const format of remoteFormats) {
+    try {
+      const payload = await requestJsonImpl(format.url, {
+        cacheKey: `GET_MEDIA:${format.url}`,
+        ttlMs: 15_000,
+        staleTtlMs: 0,
+        retries: 1,
+        retryDelayMs: 400,
+        headers: {
+          Referer: referer
+        }
+      });
+
+      const items = Array.isArray(payload) ? payload : [];
+
+      resolvedRemoteFormats.push(
+        ...items
+          .filter((item) => item && typeof item === 'object')
+          .map((item) => normalizeMediaDefinition(item))
+          .filter((item) => item.url && !item.remote)
+          .map((item) => ({
+            label: item.label,
+            url: item.url
+          }))
+      );
+    } catch {
+      // Keep available direct formats even if a remote resolver fails.
+    }
+  }
+
+  const seen = new Set();
+
+  return [...directFormats, ...resolvedRemoteFormats]
+    .filter((item) => item.url && !seen.has(item.url) && seen.add(item.url));
 }
 
-async function getVideoDataDirect(videoUrl) {
-  const html = await requestHtml(videoUrl);
-  const structured = extractStructuredVideoData(html) || fallbackVideoMetadata(html);
-  const formats = extractMediaDefinitionsFromHtml(html);
+async function searchVideosDirect(params, options = {}) {
+  const context = resolveLocaleContext(options);
+  const html = await requestHtml(buildSearchUrl(params, context.baseUrl), {
+    headers: context.headers
+  });
+  return parseSearchResultsFromHtml(html, context.baseUrl);
+}
+
+async function getFeedVideosDirect(params = {}, options = {}) {
+  const context = resolveLocaleContext(options);
+  const html = await requestHtml(buildFeedUrl(params, context.baseUrl), {
+    headers: context.headers
+  });
+  return parseSearchResultsFromHtml(html, context.baseUrl);
+}
+
+async function getVideoDataDirect(videoUrl, options = {}) {
+  const context = resolveLocaleContext(options);
+  const mediaBaseUrl = (() => {
+    try {
+      return new URL(videoUrl).origin;
+    } catch {
+      return context.baseUrl;
+    }
+  })();
+  const html = await requestHtml(videoUrl, {
+    cacheKey: `VIDEO:${videoUrl}`,
+    ttlMs: 0,
+    staleTtlMs: 0,
+    retries: 1,
+    retryDelayMs: 500,
+    headers: context.headers
+  });
+  const structured = extractStructuredVideoData(html) || fallbackVideoMetadata(html, mediaBaseUrl);
+  const formats = await resolveMediaDefinitions(extractMediaDefinitionsFromHtml(html, { includeRemote: true, baseUrl: mediaBaseUrl }), {
+    referer: videoUrl,
+    requestJsonImpl: (url, requestOptions = {}) => requestJson(url, {
+      ...requestOptions,
+      headers: {
+        ...context.headers,
+        ...(requestOptions.headers && typeof requestOptions.headers === 'object' ? requestOptions.headers : {})
+      }
+    })
+  });
 
   return {
     ...structured,
@@ -417,14 +593,15 @@ async function getVideoDataDirect(videoUrl) {
   };
 }
 
-async function getCreatorDataDirect(profileUrl) {
-  const baseUrl = buildCreatorBaseUrl(profileUrl);
+async function getCreatorDataDirect(profileUrl, options = {}) {
+  const context = resolveLocaleContext(options);
+  const baseUrl = buildCreatorBaseUrl(profileUrl, context.baseUrl);
   const [profileHtml, uploadsHtml] = await Promise.all([
-    requestHtml(baseUrl),
-    requestHtml(buildCreatorUploadsUrl(baseUrl))
+    requestHtml(baseUrl, { headers: context.headers }),
+    requestHtml(buildCreatorUploadsUrl(baseUrl, context.baseUrl), { headers: context.headers })
   ]);
-  const creator = extractCreatorProfileDataFromHtml(profileHtml, baseUrl);
-  const items = parseCreatorUploadsFromHtml(uploadsHtml, creator).map((item) => ({
+  const creator = extractCreatorProfileDataFromHtml(profileHtml, baseUrl, context.baseUrl);
+  const items = parseCreatorUploadsFromHtml(uploadsHtml, creator, context.baseUrl).map((item) => ({
     ...item,
     uploaderName: item.uploaderName || creator.name,
     uploaderProfile: item.uploaderProfile || creator.profileUrl
@@ -438,6 +615,7 @@ async function getCreatorDataDirect(profileUrl) {
 
 module.exports = {
   BASE_URL,
+  BASE_URL_EN,
   buildSearchUrl,
   buildFeedUrl,
   buildCreatorBaseUrl,
@@ -447,6 +625,7 @@ module.exports = {
   extractStructuredVideoData,
   extractCreatorProfileDataFromHtml,
   extractMediaDefinitionsFromHtml,
+  resolveMediaDefinitions,
   searchVideosDirect,
   getFeedVideosDirect,
   getVideoDataDirect,
