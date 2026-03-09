@@ -161,6 +161,11 @@ function applyPlayerFormat(player, sourceSelect, playerStatus, openSourceLink, f
 
   player.pause();
   player.removeAttribute('src');
+  // Remove todos os elementos <source> existentes para evitar conflitos
+  while (player.firstChild) {
+    player.removeChild(player.firstChild);
+  }
+
   const isHlsSource = getMimeTypeForUrl(format.url) === 'application/x-mpegURL';
   const canPlayHlsNatively = Boolean(player.canPlayType('application/vnd.apple.mpegurl') || player.canPlayType('application/x-mpegURL'));
 
